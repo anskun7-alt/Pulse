@@ -9,6 +9,7 @@ import 'package:better_player_plus/better_player_plus.dart';
 import 'package:hive/hive.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 import '../models/media_file.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
@@ -513,6 +514,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
     final currentFile = _playlist[_currentIndex];
 
+    if (Platform.isWindows) {
+      try {
+        await OpenFilex.open(currentFile.path);
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+        return;
+      } catch (e) {
+        debugPrint("Error opening video on Windows: $e");
+      }
+    }
+
     await _loadExternalSubtitles();
 
     try {
@@ -539,15 +552,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
         dataSource = BetterPlayerDataSource(
           BetterPlayerDataSourceType.network,
           currentFile.path,
+          cacheConfiguration: const BetterPlayerCacheConfiguration(useCache: false),
         );
-} else {
+      } else {
         dataSource = BetterPlayerDataSource(
           BetterPlayerDataSourceType.file,
           currentFile.path,
+          cacheConfiguration: const BetterPlayerCacheConfiguration(useCache: false),
         );
       }
       _betterPlayerController = BetterPlayerController(betterPlayerConfiguration);
-      await _betterPlayerController.setupDataSource(dataSource);
+      await _betterPlayerController.setupDataSource(dataSource).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          debugPrint("BetterPlayer setupDataSource timeout");
+        },
+      );
 
       // Bind controller reference
       PlaybackService.instance.activeVideoController = _betterPlayerController;

@@ -41,23 +41,34 @@ List<String> _performScanSync(IsolateScanParams params) {
 
 void _searchDirSync(Directory dir, List<String> foundPaths, IsolateScanParams params) {
   try {
-    final entities = dir.listSync(recursive: false, followLinks: false);
+    List<FileSystemEntity> entities = [];
+    try {
+      entities = dir.listSync(recursive: false, followLinks: false);
+    } catch (_) {
+      return;
+    }
+
     for (final entity in entities) {
-      final path = entity.path;
-      final name = path.split(Platform.pathSeparator).last;
+      try {
+        final path = entity.path;
+        final name = path.split(Platform.pathSeparator).last;
 
-      if (!params.showHidden && name.startsWith('.')) continue;
-      if (params.excludedFolders.any((ex) => path.startsWith(ex))) continue;
+        if (!params.showHidden && name.startsWith('.')) continue;
+        if (params.excludedFolders.any((ex) => path.startsWith(ex))) continue;
 
-      if (entity is Directory) {
-        if (name == 'Android' || name == 'data' || name == 'obb' || name == 'LOST.DIR') continue;
-        _searchDirSync(entity, foundPaths, params);
-      } else if (entity is File) {
-        final ext = name.split('.').last.toLowerCase();
-        if (params.audioExtensions.contains(ext) || params.videoExtensions.contains(ext)) {
-          foundPaths.add(path);
+        if (entity is Directory) {
+          if (name == 'Android' || name == 'data' || name == 'obb' || name == 'LOST.DIR' || name == '\$RECYCLE.BIN' || name == 'System Volume Information') continue;
+          _searchDirSync(entity, foundPaths, params);
+        } else if (entity is File) {
+          final dotIdx = name.lastIndexOf('.');
+          if (dotIdx != -1) {
+            final ext = name.substring(dotIdx + 1).toLowerCase();
+            if (params.audioExtensions.contains(ext) || params.videoExtensions.contains(ext)) {
+              foundPaths.add(path);
+            }
+          }
         }
-      }
+      } catch (_) {}
     }
   } catch (_) {}
 }
@@ -167,7 +178,7 @@ class MediaScanner {
 
   static const List<String> videoExtensions = [
     'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', '3gp',
-    'ts', 'm2ts'
+    'ts', 'm2ts', 'vob', 'ogv', 'rm', 'rmvb', 'asf', 'mpg', 'mpeg'
   ];
 
   Future<void> init() async {
@@ -407,31 +418,30 @@ class MediaScanner {
 
   Future<void> _searchDirectory(Directory dir, List<String> foundPaths, bool showHidden, List<String> excluded) async {
     try {
-      final stream = dir.list(recursive: false, followLinks: false);
-      await for (var entity in stream) {
-        final path = entity.path;
-        final name = path.split(Platform.pathSeparator).last;
+      if (!await dir.exists()) return;
+      await for (final entity in dir.list(recursive: false, followLinks: false).handleError((_) {})) {
+        try {
+          final path = entity.path;
+          final name = path.split(Platform.pathSeparator).last;
 
-        // Skip hidden files if setting is off
-        if (!showHidden && name.startsWith('.')) continue;
+          if (!showHidden && name.startsWith('.')) continue;
+          if (excluded.any((ex) => path.startsWith(ex))) continue;
 
-        // Skip excluded folders
-        if (excluded.any((ex) => path.startsWith(ex))) continue;
-
-        if (entity is Directory) {
-          // Prevent infinite recursion and Android system directory crashes (like /Android/data)
-          if (name == 'Android' || name == 'data' || name == 'obb' || name == 'LOST.DIR') continue;
-          await _searchDirectory(entity, foundPaths, showHidden, excluded);
-        } else if (entity is File) {
-          final ext = name.split('.').last.toLowerCase();
-          if (audioExtensions.contains(ext) || videoExtensions.contains(ext)) {
-            foundPaths.add(path);
+          if (entity is Directory) {
+            if (name == 'Android' || name == 'data' || name == 'obb' || name == 'LOST.DIR' || name == '\$RECYCLE.BIN' || name == 'System Volume Information') continue;
+            await _searchDirectory(entity, foundPaths, showHidden, excluded);
+          } else if (entity is File) {
+            final dotIdx = name.lastIndexOf('.');
+            if (dotIdx != -1) {
+              final ext = name.substring(dotIdx + 1).toLowerCase();
+              if (audioExtensions.contains(ext) || videoExtensions.contains(ext)) {
+                foundPaths.add(path);
+              }
+            }
           }
-        }
+        } catch (_) {}
       }
-    } catch (e) {
-      // Ignore directory access denied errors
-    }
+    } catch (_) {}
   }
 
   Future<void> deleteMediaFile(MediaFile file) async {
