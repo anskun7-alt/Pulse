@@ -2,7 +2,8 @@
 
 **Your media, your way.**
 
-Pulse is a feature-rich media player built with Flutter, designed for playing audio and video files on your device. It scans your local storage, organizes your media into categories, and provides a seamless playback experience with background audio support.
+Pulse is a feature-rich media player built with Flutter, designed for playing audio and video files on your device. It scans your local storage, organizes your media into categories, and 
+provides a seamless playback experience with background audio support.
 
 ## ✨ Features
 

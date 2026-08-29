@@ -33,14 +33,18 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Release APK
-        run: flutter build apk --release
+      - name: Build Release APKs (Optimized & Split by ABI)
+        run: |
+          flutter build apk --release --split-per-abi
+          flutter build apk --release
 
-      - name: Prepare Release Asset
+      - name: Prepare Release Assets
         run: |
           TAG_NAME=${GITHUB_REF#refs/tags/}
           mkdir -p release_assets
-          cp build/app/outputs/flutter-apk/app-release.apk release_assets/Pulse-${TAG_NAME}.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release_assets/Pulse-${TAG_NAME}-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release_assets/Pulse-${TAG_NAME}-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-release.apk release_assets/Pulse-${TAG_NAME}-universal.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -60,11 +60,11 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: "launcher_icon"
-  image_path: "assets/play-button.png"
+  image_path: "assets/play-button.webp"
 
 flutter:
   uses-material-design: true
   assets:
     - assets/
-    - assets/play-button.png
+    - assets/play-button.webp
     - assets/animation/

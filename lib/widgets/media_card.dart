@@ -97,8 +97,10 @@ class MediaCard extends StatelessWidget {
                                                 ? Image.file(
                                                     File(file.albumArtPath!),
                                                     fit: BoxFit.cover,
+                                                    cacheWidth: 300,
+                                                    cacheHeight: 300,
                                                     errorBuilder: (context, error, stackTrace) => _buildPlaceholder(48),
-                                                  )
+                                                )
                                                 : _buildPlaceholder(48);
 
                                             return SpinningThumbnail(
@@ -313,6 +315,8 @@ class MediaCard extends StatelessWidget {
                                       ? Image.file(
                                           File(file.albumArtPath!),
                                           fit: BoxFit.cover,
+                                          cacheWidth: 160,
+                                          cacheHeight: 160,
                                           errorBuilder: (context, error, stackTrace) => _buildPlaceholder(28),
                                         )
                                       : _buildPlaceholder(28);
@@ -523,6 +527,10 @@ class _SpinningThumbnailState extends State<SpinningThumbnail>
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.isSpinning) {
+      return widget.child;
+    }
+
     return RotationTransition(
       turns: _controller,
       child: ClipOval(
