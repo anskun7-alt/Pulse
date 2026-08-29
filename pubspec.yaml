@@ -1,0 +1,63 @@
+name: pulse
+description: Your media, your way.
+version: 1.0.0+1
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  better_player_plus: ^1.2.1
+  video_thumbnail: ^0.5.0
+
+  # Audio
+  just_audio: ^0.9.36
+  just_audio_windows: ^0.2.3
+  just_audio_background: ^0.0.1-beta.11
+  audio_service: ^0.18.0
+  audio_session: ^0.1.18
+
+  # Metadata & tag editing
+  flutter_media_metadata:
+    path: third_party/flutter_media_metadata
+  audiotags: ^1.4.5
+
+  # Lyrics
+  http: ^1.2.0
+
+  # Local storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # File system
+  permission_handler: ^11.3.0
+  path_provider: ^2.1.0
+  share_plus: ^7.2.0
+
+  # UI & animation
+  flutter_animate: ^4.5.0
+  palette_generator: ^0.3.3
+  cached_network_image: ^3.3.0
+  shimmer: ^3.0.0
+  blur: ^3.1.0
+  file_picker: ^11.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  image_path: "assets/play-button.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+    - assets/play-button.png

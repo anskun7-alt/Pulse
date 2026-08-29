@@ -1,0 +1,365 @@
+import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
+import '../services/media_scanner.dart';
+import '../widgets/equalizer_screen.dart';
+import '../theme/colors.dart';
+import '../theme/typography.dart';
+
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({Key? key}) : super(key: key);
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  late Box _settingsBox;
+  bool _isLoading = true;
+
+  // Settings states
+  double _defaultSpeed = 1.0;
+  int _skipInterval = 10;
+  bool _rememberPosition = true;
+  bool _backgroundAudio = true;
+  double _crossfadeDuration = 2.0;
+
+  String _themeMode = 'Dark';
+  bool _dynamicColor = true;
+  String _albumArtBg = 'Blur';
+  String _visualizerStyle = 'Bars';
+
+  bool _showHiddenFiles = false;
+
+  double _bassBoostVal = 60.0;
+  bool _stereoWidener = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    _settingsBox = await Hive.openBox('settings_box');
+    setState(() {
+      _defaultSpeed = _settingsBox.get('default_speed', defaultValue: 1.0) as double;
+      _skipInterval = _settingsBox.get('skip_interval', defaultValue: 10) as int;
+      _rememberPosition = _settingsBox.get('remember_position', defaultValue: true) as bool;
+      _backgroundAudio = _settingsBox.get('background_audio', defaultValue: true) as bool;
+      _crossfadeDuration = _settingsBox.get('crossfade_duration', defaultValue: 2.0) as double;
+
+      _themeMode = _settingsBox.get('theme_mode', defaultValue: 'Dark') as String;
+      _dynamicColor = _settingsBox.get('dynamic_color', defaultValue: true) as bool;
+      _albumArtBg = _settingsBox.get('album_art_bg', defaultValue: 'Blur') as String;
+      _visualizerStyle = _settingsBox.get('visualizer_style', defaultValue: 'Bars') as String;
+
+      _showHiddenFiles = _settingsBox.get('show_hidden_files', defaultValue: false) as bool;
+
+      _bassBoostVal = _settingsBox.get('bass_boost_val', defaultValue: 60.0) as double;
+      _stereoWidener = _settingsBox.get('stereo_widener', defaultValue: false) as bool;
+
+      _isLoading = false;
+    });
+  }
+
+  void _saveSetting(String key, dynamic value) {
+    _settingsBox.put(key, value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: PulseColors.background,
+        body: Center(child: CircularProgressIndicator(color: PulseColors.accentPrimary)),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: PulseColors.background,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Text("Settings", style: PulseTypography.displayLarge),
+            ),
+
+            // PLAYBACK GROUP
+            _buildSectionHeader("PLAYBACK"),
+            _buildDropDownSetting<double>(
+              title: "Default speed",
+              value: _defaultSpeed,
+              items: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() => _defaultSpeed = val);
+                  _saveSetting('default_speed', val);
+                }
+              },
+            ),
+            _buildDropDownSetting<int>(
+              title: "Skip interval",
+              value: _skipInterval,
+              items: [5, 10, 15, 30],
+              labels: {5: "5s", 10: "10s", 15: "15s", 30: "30s"},
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() => _skipInterval = val);
+                  _saveSetting('skip_interval', val);
+                }
+              },
+            ),
+            _buildSwitchSetting(
+              title: "Remember position",
+              value: _rememberPosition,
+              onChanged: (val) {
+                setState(() => _rememberPosition = val);
+                _saveSetting('remember_position', val);
+              },
+            ),
+            _buildSwitchSetting(
+              title: "Background audio",
+              value: _backgroundAudio,
+              onChanged: (val) {
+                setState(() => _backgroundAudio = val);
+                _saveSetting('background_audio', val);
+              },
+            ),
+            _buildSliderSetting(
+              title: "Crossfade duration",
+              value: _crossfadeDuration,
+              min: 0.0,
+              max: 5.0,
+              divisions: 5,
+              label: "${_crossfadeDuration.round()}s",
+              onChanged: (val) {
+                setState(() => _crossfadeDuration = val);
+                _saveSetting('crossfade_duration', val);
+              },
+            ),
+            const SizedBox(height: 20),
+
+            // APPEARANCE GROUP
+            _buildSectionHeader("APPEARANCE"),
+            _buildDropDownSetting<String>(
+              title: "Theme",
+              value: _themeMode,
+              items: ['Dark', 'AMOLED', 'Creme', 'Light', 'System'],
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() => _themeMode = val);
+                  _saveSetting('theme_mode', val);
+                }
+              },
+            ),
+            _buildSwitchSetting(
+              title: "Dynamic color",
+              value: _dynamicColor,
+              onChanged: (val) {
+                setState(() => _dynamicColor = val);
+                _saveSetting('dynamic_color', val);
+              },
+            ),
+            _buildDropDownSetting<String>(
+              title: "Album art background",
+              value: _albumArtBg,
+              items: ['Blur', 'Gradient', 'Solid'],
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() => _albumArtBg = val);
+                  _saveSetting('album_art_bg', val);
+                }
+              },
+            ),
+            _buildDropDownSetting<String>(
+              title: "Visualizer style",
+              value: _visualizerStyle,
+              items: ['Bars', 'Wave', 'Circle', 'Off'],
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() => _visualizerStyle = val);
+                  _saveSetting('visualizer_style', val);
+                }
+              },
+            ),
+            const SizedBox(height: 20),
+
+            // LIBRARY GROUP
+            _buildSectionHeader("LIBRARY"),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text("Scan media", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+              trailing: ElevatedButton(
+                onPressed: () {
+                  MediaScanner.instance.scan();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text("Media scan started in background"),
+                      backgroundColor: PulseColors.accentPrimary,
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: PulseColors.accentPrimary, foregroundColor: Colors.white),
+                child: const Text("Scan now"),
+              ),
+            ),
+            _buildSwitchSetting(
+              title: "Show hidden files",
+              value: _showHiddenFiles,
+              onChanged: (val) {
+                setState(() => _showHiddenFiles = val);
+                _saveSetting('show_hidden_files', val);
+              },
+            ),
+            const SizedBox(height: 20),
+
+            // AUDIO GROUP
+            _buildSectionHeader("AUDIO"),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text("Equalizer", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+              trailing: Icon(Icons.chevron_right_rounded, color: PulseColors.textSecondary),
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const EqualizerScreen()));
+              },
+            ),
+            _buildSliderSetting(
+              title: "Bass boost",
+              value: _bassBoostVal,
+              min: 0.0,
+              max: 100.0,
+              divisions: 10,
+              label: "${_bassBoostVal.round()}%",
+              onChanged: (val) {
+                setState(() => _bassBoostVal = val);
+                _saveSetting('bass_boost_val', val);
+              },
+            ),
+            _buildSwitchSetting(
+              title: "Stereo widener",
+              value: _stereoWidener,
+              onChanged: (val) {
+                setState(() => _stereoWidener = val);
+                _saveSetting('stereo_widener', val);
+              },
+            ),
+            const SizedBox(height: 20),
+
+            // ABOUT GROUP
+            _buildSectionHeader("ABOUT"),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("Pulse v1.0.0", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+                  ElevatedButton(
+                    onPressed: () async {
+                      final box = await Hive.openBox('media_files_box');
+                      await box.clear();
+                      MediaScanner.instance.allFiles.value = [];
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: const Text("Cache cleared"), backgroundColor: PulseColors.danger),
+                        );
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(backgroundColor: PulseColors.danger.withValues(alpha: 0.2), foregroundColor: PulseColors.danger),
+                    child: const Text("Clear cache"),
+                  )
+                ],
+              ),
+            ),
+
+            // Spacer bottom padding
+            const SizedBox(height: 160),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+      child: Text(
+        title,
+        style: PulseTypography.monoLabel.copyWith(color: PulseColors.activeAccentSecondary, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _buildSwitchSetting({required String title, required bool value, required ValueChanged<bool> onChanged}) {
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(title, style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+      value: value,
+      activeThumbColor: PulseColors.accentPrimary,
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildSliderSetting({
+    required String title,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String label,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(title, style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+              Text(label, style: PulseTypography.monoLabel.copyWith(color: PulseColors.activeAccentSecondary)),
+            ],
+          ),
+          Slider(
+            value: value,
+            min: min,
+            max: max,
+            divisions: divisions,
+            activeColor: PulseColors.accentPrimary,
+            inactiveColor: PulseColors.surface,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropDownSetting<T>({
+    required String title,
+    required T value,
+    required List<T> items,
+    Map<T, String>? labels,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(title, style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+      trailing: DropdownButton<T>(
+        value: value,
+        dropdownColor: PulseColors.surfaceHigh,
+        underline: const SizedBox.shrink(),
+        style: PulseTypography.bodyLarge.copyWith(color: PulseColors.activeAccentPrimary, fontWeight: FontWeight.bold),
+        items: items.map((item) {
+          return DropdownMenuItem<T>(
+            value: item,
+            child: Text(labels != null ? labels[item]! : item.toString()),
+          );
+        }).toList(),
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
