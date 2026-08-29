@@ -14,6 +14,7 @@ import '../models/media_file.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../services/playback_service.dart';
+import '../services/shortcuts_service.dart';
 
 enum VideoRepeatMode { off, all, one }
 enum ScreenOrientationMode { auto, landscape, portrait }
@@ -507,6 +508,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
         });
       }
     });
+  }
+
+  void _cycleAudioTrack() {
+    try {
+      final tracks = _betterPlayerController.betterPlayerAsmsAudioTracks;
+      if (tracks != null && tracks.length > 1) {
+        final current = _betterPlayerController.betterPlayerAsmsAudioTrack;
+        final idx = tracks.indexOf(current);
+        final next = tracks[(idx + 1) % tracks.length];
+        _betterPlayerController.setAudioTrack(next);
+        _showOverlayHUD('Audio: ${next.label ?? next.language ?? "Track"}', 1.0);
+      } else {
+        _showOverlayHUD('1 Audio Track', 1.0);
+      }
+    } catch (_) {}
+  }
+
+  void _cycleSubtitles() {
+    try {
+      final subs = _betterPlayerController.betterPlayerSubtitlesSourceList;
+      if (subs != null && subs.isNotEmpty) {
+        final current = _betterPlayerController.betterPlayerSubtitlesSource;
+        final idx = subs.indexOf(current);
+        final nextIdx = idx + 1;
+        if (nextIdx < subs.length) {
+          _betterPlayerController.setupSubtitleSource(subs[nextIdx]);
+          _showOverlayHUD('Subtitles: ${subs[nextIdx].name ?? "Track $nextIdx"}', 1.0);
+        } else {
+          _betterPlayerController.setupSubtitleSource(BetterPlayerSubtitlesSource(type: BetterPlayerSubtitlesSourceType.none));
+          _showOverlayHUD('Subtitles: Off', 1.0);
+        }
+      } else {
+        _showOverlayHUD('No Subtitles', 1.0);
+      }
+    } catch (_) {}
   }
 
   Future<void> _initPlayer() async {
@@ -1708,18 +1744,62 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
     final size = MediaQuery.of(context).size;
 
-    return WillPopScope(
-      onWillPop: () async {
-        if (_isLocked) {
-          _showOverlayHUD('Lock', 1.0);
-          return false;
+    return KeyboardListener(
+      focusNode: FocusNode()..requestFocus(),
+      autofocus: true,
+      onKeyEvent: (event) {
+        if (event is! KeyDownEvent) return;
+        final key = event.logicalKey;
+        final isCtrl = HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed;
+
+        if (key == LogicalKeyboardKey.keyB && !isCtrl) {
+          _cycleAudioTrack();
+        } else if (key == LogicalKeyboardKey.keyV && !isCtrl) {
+          _cycleSubtitles();
+        } else if (key == LogicalKeyboardKey.keyA && !isCtrl) {
+          final modes = ['Fit', 'Fill', 'Stretch', '16:9', '4:3', '1:1'];
+          final currentIdx = modes.indexOf(_zoomMode);
+          final nextMode = modes[(currentIdx + 1) % modes.length];
+          setState(() {
+            _zoomMode = nextMode;
+            _scale = 1.0;
+          });
+          _applyZoomMode();
+          _showOverlayHUD('Aspect: $nextMode', 1.0);
+        } else if (key == LogicalKeyboardKey.keyR && !isCtrl) {
+          _setRotation((_rotation + 90) % 360);
+          _showOverlayHUD('Rotate: $_rotation°', 1.0);
+        } else if (key == LogicalKeyboardKey.keyS && !isCtrl) {
+          _takeScreenshot();
+        } else if (key == LogicalKeyboardKey.keyF && !isCtrl) {
+          _cycleScreenOrientation();
+        } else if (key == LogicalKeyboardKey.keyH && !isCtrl) {
+          setState(() => _subtitleDelay = (_subtitleDelay + 0.5).clamp(-5.0, 5.0));
+          _showOverlayHUD('Sub Delay: ${_subtitleDelay.toStringAsFixed(1)}s', 1.0);
+        } else if (key == LogicalKeyboardKey.keyG && !isCtrl) {
+          setState(() => _subtitleDelay = (_subtitleDelay - 0.5).clamp(-5.0, 5.0));
+          _showOverlayHUD('Sub Delay: ${_subtitleDelay.toStringAsFixed(1)}s', 1.0);
+        } else if (key == LogicalKeyboardKey.keyJ && !isCtrl) {
+          setState(() => _subtitleDelay = 0.0);
+          _showOverlayHUD('Sub Delay: 0.0s', 1.0);
+        } else if (key == LogicalKeyboardKey.escape) {
+          _exitPlayer();
+        } else {
+          PulseShortcuts.handleKeyEvent(event, context);
         }
-        await _exitPlayer();
-        return false;
       },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
+      child: WillPopScope(
+        onWillPop: () async {
+          if (_isLocked) {
+            _showOverlayHUD('Lock', 1.0);
+            return false;
+          }
+          await _exitPlayer();
+          return false;
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
           fit: StackFit.expand,
           children: [
             // ── Video ──────────────────────────────────────────────────────────
@@ -2384,8 +2464,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 // ── Helper: circular pill button for the action row ──────────────────────────
