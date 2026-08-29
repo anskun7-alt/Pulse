@@ -308,6 +308,12 @@ class MediaScanner {
         final mediaFile = await MetadataService.instance.extractMetadata(file, isVideo: isVideo);
         await _mediaBox.put(path, mediaFile.toMap());
         newFiles.add(mediaFile);
+
+        // Progressive stream to UI every 20 files
+        if (newFiles.length % 20 == 0) {
+          final partial = List<MediaFile>.from(newFiles)..sort((a, b) => b.addedDate.compareTo(a.addedDate));
+          allFiles.value = partial;
+        }
       }
     }
 

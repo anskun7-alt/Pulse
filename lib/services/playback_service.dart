@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:better_player_plus/better_player_plus.dart';
 import 'media_scanner.dart';
+import 'audio_focus_controller.dart';
 
 import '../models/media_file.dart';
 import '../services/lyrics_service.dart';
@@ -44,6 +45,7 @@ class PlaybackService {
   final ValueNotifier<List<MediaFile>> queue = ValueNotifier<List<MediaFile>>([]);
   final ValueNotifier<int> queueIndex = ValueNotifier<int>(-1);
   final ValueNotifier<bool> isShuffle = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> autoPlayNext = ValueNotifier<bool>(true);
   final ValueNotifier<RepeatMode> repeatMode =
       ValueNotifier<RepeatMode>(RepeatMode.off);
   final ValueNotifier<bool> isLoading = ValueNotifier<bool>(false);
@@ -174,18 +176,32 @@ class PlaybackService {
   Future<void> init() async {
     await _cancelSubscriptions();
 
+    // Load and apply saved preferences from Hive
+    final settingsBox = Hive.box('settings_box');
+    final savedVolume = settingsBox.get('volume_scale', defaultValue: 1.0) as double;
+    autoPlayNext.value = settingsBox.get('auto_play_next', defaultValue: true) as bool;
+
     if (Platform.isAndroid) {
-      _loudnessEnhancer = AndroidLoudnessEnhancer();
-      final pipeline = AudioPipeline(androidAudioEffects: [_loudnessEnhancer!]);
-      _audioPlayer = AudioPlayer(audioPipeline: pipeline);
-      await _loudnessEnhancer!.setEnabled(true);
+      try {
+        _loudnessEnhancer = AndroidLoudnessEnhancer();
+        final pipeline = AudioPipeline(androidAudioEffects: [_loudnessEnhancer!]);
+        _audioPlayer = AudioPlayer(audioPipeline: pipeline);
+        await _loudnessEnhancer!.setEnabled(true);
+      } catch (e) {
+        debugPrint('[PlaybackService] AndroidLoudnessEnhancer not supported on this DSP: $e');
+        _loudnessEnhancer = null;
+        _audioPlayer = AudioPlayer();
+      }
     } else {
       _audioPlayer = AudioPlayer();
     }
 
-    // Load and apply saved volume scale preference
-    final settingsBox = Hive.box('settings_box');
-    final savedVolume = settingsBox.get('volume_scale', defaultValue: 1.0) as double;
+    // Register with AudioFocusController
+    AudioFocusController.instance.registerPlayers(
+      audioPlayer: _audioPlayer,
+      videoController: activeVideoController,
+    );
+
     await setVolumeScale(savedVolume);
 
     if (Platform.isAndroid) {
@@ -272,7 +288,10 @@ class PlaybackService {
         _stopHeartbeat();
       }
       if (state.processingState == ProcessingState.completed) {
-        if (repeatMode.value == RepeatMode.off) {
+        if (autoPlayNext.value && queue.value.isNotEmpty) {
+          debugPrint('[PlaybackService] Song completed. Auto-playing next track.');
+          next();
+        } else if (repeatMode.value == RepeatMode.off) {
           isPlaying.value = false;
           _audioPlayer.pause();
           _audioPlayer.seek(Duration.zero, index: 0);
@@ -314,6 +333,10 @@ class PlaybackService {
     _positionSubscription =
         _audioPlayer.positionStream.listen((pos) {
       position.value = pos;
+      final track = currentTrack.value;
+      if (track != null && pos.inSeconds > 3) {
+        _saveLastPlayed(track, pos);
+      }
     });
 
     _durationSubscription =
@@ -326,6 +349,26 @@ class PlaybackService {
         }
       }
     });
+  }
+
+  Future<void> toggleAutoPlayNext() async {
+    autoPlayNext.value = !autoPlayNext.value;
+    final settingsBox = Hive.box('settings_box');
+    await settingsBox.put('auto_play_next', autoPlayNext.value);
+  }
+
+  Future<void> _saveLastPlayed(MediaFile track, Duration pos) async {
+    try {
+      final box = Hive.box('settings_box');
+      await box.put('last_played_path', track.path);
+      await box.put('last_played_title', track.title);
+      await box.put('last_played_artist', track.artist);
+      await box.put('last_played_art', track.albumArtPath ?? '');
+      await box.put('last_played_position_ms', pos.inMilliseconds);
+      await box.put('last_played_is_video', track.isVideo);
+      await box.put('last_played_duration_ms', track.duration.inMilliseconds);
+      await box.put('last_played_timestamp', DateTime.now().millisecondsSinceEpoch);
+    } catch (_) {}
   }
 
   bool _isSamePath(String p1, String p2) {
@@ -473,8 +516,14 @@ class PlaybackService {
       await setVolumeScale(volumeScale.value);
       await _audioPlayer.setSpeed(playbackSpeed.value);
 
-      // Play optimistically
-      await _audioPlayer.play();
+      // Acquire music focus and silence conflicting video sink
+      await AudioFocusController.instance.requestMusicFocus();
+
+      // Play with recovery
+      await AudioFocusController.instance.executeWithRecovery(
+        opName: 'PlayTrack',
+        operation: () => _audioPlayer.play(),
+      );
       isPlaying.value = true;
 
       // Fire-and-forget lyrics fetch after play starts

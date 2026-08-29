@@ -23,6 +23,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _rememberPosition = true;
   bool _backgroundAudio = true;
   double _crossfadeDuration = 2.0;
+  bool _autoPlayNext = true;
 
   String _themeMode = 'Dark';
   bool _dynamicColor = true;
@@ -50,6 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _defaultSpeed = _settingsBox.get('default_speed', defaultValue: 1.0) as double;
       _skipInterval = _settingsBox.get('skip_interval', defaultValue: 10) as int;
       _rememberPosition = _settingsBox.get('remember_position', defaultValue: true) as bool;
+      _autoPlayNext = _settingsBox.get('auto_play_next', defaultValue: true) as bool;
       _backgroundAudio = _settingsBox.get('background_audio', defaultValue: true) as bool;
       _crossfadeDuration = _settingsBox.get('crossfade_duration', defaultValue: 2.0) as double;
 
@@ -126,6 +128,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (val) {
                 setState(() => _rememberPosition = val);
                 _saveSetting('remember_position', val);
+              },
+            ),
+            _buildSwitchSetting(
+              title: "Auto-play next track",
+              value: _autoPlayNext,
+              onChanged: (val) {
+                setState(() => _autoPlayNext = val);
+                _saveSetting('auto_play_next', val);
+                PlaybackService.instance.autoPlayNext.value = val;
               },
             ),
             _buildSwitchSetting(

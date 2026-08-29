@@ -9,6 +9,7 @@ import '../widgets/media_card.dart';
 import '../widgets/context_bottom_sheet.dart';
 import '../widgets/add_to_playlist_sheet.dart';
 import '../widgets/animated_widgets.dart';
+import '../widgets/continue_playing_card.dart';
 import '../services/playback_service.dart';
 import '../players/video_player_screen.dart';
 import '../theme/colors.dart';
@@ -317,10 +318,13 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
       valueListenable: playbackService.currentTrack,
       builder: (context, currentTrack, child) {
         return ListView.builder(
-          itemCount: tracks.length,
+          itemCount: tracks.length + 1,
           padding: const EdgeInsets.only(left: 20, right: 20, top: 8, bottom: 168),
           itemBuilder: (context, index) {
-            final track = tracks[index];
+            if (index == 0) {
+              return const ContinuePlayingCard();
+            }
+            final track = tracks[index - 1];
             final isPlayingThis = currentTrack?.path == track.path;
 
             return AnimatedContainer(
@@ -532,6 +536,8 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
             .slideX(begin: 0.04, end: 0, duration: 200.ms, curve: Curves.easeOutCubic);
       },
     );
+  void _handleTrackTap(MediaFile track, List<MediaFile> allTracks) {
+    PlaybackService.instance.playTrack(track, newQueue: allTracks);
   }
 }
 

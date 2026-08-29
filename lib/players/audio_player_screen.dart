@@ -474,7 +474,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                               children: [
                                 // ── Secondary row: shuffle + repeat ─────────────
                                 Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                   children: [
                                     // Shuffle
                                     ValueListenableBuilder<bool>(
@@ -483,7 +483,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                         return _AnimatedTapScale(
                                           onTap: () => _playback.toggleShuffle(),
                                           child: Padding(
-                                            padding: const EdgeInsets.all(12.0),
+                                            padding: const EdgeInsets.all(10.0),
                                             child: Icon(
                                               Icons.shuffle_rounded,
                                               color: shuf ? accentColor : Colors.white60,
@@ -493,7 +493,50 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                         );
                                       },
                                     ),
-                                    const SizedBox(width: 48),
+
+                                    // Auto-Play Next Toggle
+                                    ValueListenableBuilder<bool>(
+                                      valueListenable: _playback.autoPlayNext,
+                                      builder: (context, autoPlay, child) {
+                                        return _AnimatedTapScale(
+                                          onTap: () => _playback.toggleAutoPlayNext(),
+                                          child: Tooltip(
+                                            message: autoPlay ? 'Auto-Play: ON' : 'Auto-Play: OFF',
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                              decoration: BoxDecoration(
+                                                color: autoPlay ? accentColor.withValues(alpha: 0.15) : Colors.transparent,
+                                                borderRadius: BorderRadius.circular(12),
+                                                border: Border.all(
+                                                  color: autoPlay ? accentColor.withValues(alpha: 0.4) : Colors.white12,
+                                                  width: 1,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    autoPlay ? Icons.playlist_play_rounded : Icons.playlist_remove_rounded,
+                                                    color: autoPlay ? accentColor : Colors.white60,
+                                                    size: 18,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    'Auto-Next',
+                                                    style: TextStyle(
+                                                      color: autoPlay ? accentColor : Colors.white60,
+                                                      fontSize: 11,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+
                                     // Repeat
                                     ValueListenableBuilder<RepeatMode>(
                                       valueListenable: _playback.repeatMode,
@@ -509,7 +552,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                         return _AnimatedTapScale(
                                           onTap: () => _playback.toggleRepeat(),
                                           child: Padding(
-                                            padding: const EdgeInsets.all(12.0),
+                                            padding: const EdgeInsets.all(10.0),
                                             child: Icon(
                                               icon,
                                               color: color,
