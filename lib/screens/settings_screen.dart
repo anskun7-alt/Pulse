@@ -89,151 +89,272 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       backgroundColor: PulseColors.background,
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 20),
-              child: Text("Settings", style: PulseTypography.displayLarge),
-            ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 780),
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Text("Settings", style: PulseTypography.displayLarge),
+                ),
 
-            // PLAYBACK GROUP
-            _buildSectionHeader("PLAYBACK"),
-            _buildDropDownSetting<double>(
-              title: "Default speed",
-              value: _defaultSpeed,
-              items: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() => _defaultSpeed = val);
-                  _saveSetting('default_speed', val);
-                }
-              },
-            ),
-            _buildDropDownSetting<int>(
-              title: "Skip interval",
-              value: _skipInterval,
-              items: [5, 10, 15, 30],
-              labels: {5: "5s", 10: "10s", 15: "15s", 30: "30s"},
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() => _skipInterval = val);
-                  _saveSetting('skip_interval', val);
-                }
-              },
-            ),
-            _buildSwitchSetting(
-              title: "Remember position",
-              value: _rememberPosition,
-              onChanged: (val) {
-                setState(() => _rememberPosition = val);
-                _saveSetting('remember_position', val);
-              },
-            ),
-            _buildSwitchSetting(
-              title: "Auto-play next track",
-              value: _autoPlayNext,
-              onChanged: (val) {
-                setState(() => _autoPlayNext = val);
-                _saveSetting('auto_play_next', val);
-                PlaybackService.instance.autoPlayNext.value = val;
-              },
-            ),
-            _buildSwitchSetting(
-              title: "Background audio",
-              value: _backgroundAudio,
-              onChanged: (val) {
-                setState(() => _backgroundAudio = val);
-                _saveSetting('background_audio', val);
-              },
-            ),
-            _buildSliderSetting(
-              title: "Crossfade duration",
-              value: _crossfadeDuration,
-              min: 0.0,
-              max: 5.0,
-              divisions: 5,
-              label: "${_crossfadeDuration.round()}s",
-              onChanged: (val) {
-                setState(() => _crossfadeDuration = val);
-                _saveSetting('crossfade_duration', val);
-              },
-            ),
-            const SizedBox(height: 20),
+                // PLAYBACK GROUP
+                _buildSectionHeader("PLAYBACK"),
+                _buildDropDownSetting<double>(
+                  title: "Default speed",
+                  value: _defaultSpeed,
+                  items: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _defaultSpeed = val);
+                      _saveSetting('default_speed', val);
+                    }
+                  },
+                ),
+                _buildDropDownSetting<int>(
+                  title: "Skip interval",
+                  value: _skipInterval,
+                  items: [5, 10, 15, 30],
+                  labels: {5: "5s", 10: "10s", 15: "15s", 30: "30s"},
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _skipInterval = val);
+                      _saveSetting('skip_interval', val);
+                    }
+                  },
+                ),
+                _buildSwitchSetting(
+                  title: "Remember position",
+                  value: _rememberPosition,
+                  onChanged: (val) {
+                    setState(() => _rememberPosition = val);
+                    _saveSetting('remember_position', val);
+                  },
+                ),
+                _buildSwitchSetting(
+                  title: "Auto-play next track",
+                  value: _autoPlayNext,
+                  onChanged: (val) {
+                    setState(() => _autoPlayNext = val);
+                    _saveSetting('auto_play_next', val);
+                    PlaybackService.instance.autoPlayNext.value = val;
+                  },
+                ),
+                _buildSwitchSetting(
+                  title: "Background audio",
+                  value: _backgroundAudio,
+                  onChanged: (val) {
+                    setState(() => _backgroundAudio = val);
+                    _saveSetting('background_audio', val);
+                  },
+                ),
+                _buildSliderSetting(
+                  title: "Crossfade duration",
+                  value: _crossfadeDuration,
+                  min: 0.0,
+                  max: 5.0,
+                  divisions: 5,
+                  label: "${_crossfadeDuration.round()}s",
+                  onChanged: (val) {
+                    setState(() => _crossfadeDuration = val);
+                    _saveSetting('crossfade_duration', val);
+                  },
+                ),
+                const SizedBox(height: 20),
 
-            // APPEARANCE GROUP
-            _buildSectionHeader("APPEARANCE"),
-            _buildDropDownSetting<String>(
-              title: "Theme",
-              value: _themeMode,
-              items: ['Dark', 'AMOLED', 'Creme', 'Light', 'System'],
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() => _themeMode = val);
-                  _saveSetting('theme_mode', val);
-                }
-              },
-            ),
-            _buildSwitchSetting(
-              title: "Dynamic color",
-              value: _dynamicColor,
-              onChanged: (val) {
-                setState(() => _dynamicColor = val);
-                _saveSetting('dynamic_color', val);
-              },
-            ),
-            _buildDropDownSetting<String>(
-              title: "Album art background",
-              value: _albumArtBg,
-              items: ['Blur', 'Gradient', 'Solid'],
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() => _albumArtBg = val);
-                  _saveSetting('album_art_bg', val);
-                }
-              },
-            ),
-            _buildDropDownSetting<String>(
-              title: "Visualizer style",
-              value: _visualizerStyle,
-              items: ['Bars', 'Wave', 'Circle', 'Off'],
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() => _visualizerStyle = val);
-                  _saveSetting('visualizer_style', val);
-                }
-              },
-            ),
-            const SizedBox(height: 20),
+                // APPEARANCE GROUP
+                _buildSectionHeader("APPEARANCE"),
+                _buildDropDownSetting<String>(
+                  title: "Theme",
+                  value: _themeMode,
+                  items: ['Dark', 'AMOLED', 'Creme', 'Light', 'System'],
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _themeMode = val);
+                      _saveSetting('theme_mode', val);
+                    }
+                  },
+                ),
+                _buildSwitchSetting(
+                  title: "Dynamic color",
+                  value: _dynamicColor,
+                  onChanged: (val) {
+                    setState(() => _dynamicColor = val);
+                    _saveSetting('dynamic_color', val);
+                  },
+                ),
+                _buildDropDownSetting<String>(
+                  title: "Album art background",
+                  value: _albumArtBg,
+                  items: ['Blur', 'Gradient', 'Solid'],
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _albumArtBg = val);
+                      _saveSetting('album_art_bg', val);
+                    }
+                  },
+                ),
+                _buildDropDownSetting<String>(
+                  title: "Visualizer style",
+                  value: _visualizerStyle,
+                  items: ['Bars', 'Wave', 'Circle', 'Off'],
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _visualizerStyle = val);
+                      _saveSetting('visualizer_style', val);
+                    }
+                  },
+                ),
+                const SizedBox(height: 20),
 
-            // LIBRARY GROUP
-            _buildSectionHeader("LIBRARY"),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text("Scan media", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
-              trailing: ElevatedButton(
-                onPressed: () {
-                  MediaScanner.instance.scan();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: const Text("Media scan started in background"),
-                      backgroundColor: PulseColors.accentPrimary,
-                    ),
-                  );
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: PulseColors.accentPrimary, foregroundColor: Colors.white),
-                child: const Text("Scan now"),
-              ),
-            ),
-            _buildSwitchSetting(
-              title: "Show hidden files",
-              value: _showHiddenFiles,
-              onChanged: (val) {
-                setState(() => _showHiddenFiles = val);
-                _saveSetting('show_hidden_files', val);
-              },
-            ),
+                // LIBRARY & FOLDERS GROUP
+                _buildSectionHeader("LIBRARY & FOLDERS"),
+                ValueListenableBuilder<bool>(
+                  valueListenable: MediaScanner.instance.isScanning,
+                  builder: (context, isScanning, _) {
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text("Scan media", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+                      subtitle: ValueListenableBuilder<String>(
+                        valueListenable: MediaScanner.instance.scanStatus,
+                        builder: (context, status, _) => status.isNotEmpty
+                            ? Text(status, style: TextStyle(color: PulseColors.accentSecondary, fontSize: 12))
+                            : const Text("Scan device & custom folders", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                      ),
+                      trailing: ElevatedButton.icon(
+                        onPressed: isScanning ? null : () => MediaScanner.instance.scan(),
+                        icon: isScanning
+                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.refresh_rounded, size: 16),
+                        label: Text(isScanning ? "Scanning..." : "Scan now"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: PulseColors.accentPrimary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 10),
+
+                // Custom Folder Manager Card
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: PulseColors.surfaceHigh.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "Custom Media Locations",
+                            style: PulseTypography.bodyMedium.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              final path = await MediaScanner.instance.pickAndAddCustomFolder();
+                              if (path != null && mounted) {
+                                setState(() {});
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text("Added folder: $path"),
+                                    backgroundColor: PulseColors.accentPrimary,
+                                  ),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.add_rounded, size: 16),
+                            label: const Text("Add Folder"),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: PulseColors.accentPrimary.withValues(alpha: 0.25),
+                              foregroundColor: PulseColors.accentPrimary,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                side: BorderSide(color: PulseColors.accentPrimary.withValues(alpha: 0.5)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        "Include music and videos stored in other folders, external SD cards, or external drives.",
+                        style: TextStyle(color: PulseColors.textSecondary, fontSize: 12),
+                      ),
+                      const SizedBox(height: 12),
+                      Builder(
+                        builder: (context) {
+                          final folders = MediaScanner.instance.getCustomFolders();
+                          if (folders.isEmpty) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Text(
+                                "No custom folders added yet. Default storage roots are active.",
+                                style: TextStyle(color: PulseColors.textSecondary, fontSize: 12, fontStyle: FontStyle.italic),
+                              ),
+                            );
+                          }
+                          return Column(
+                            children: folders.map((f) {
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: PulseColors.surface,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.folder_rounded, size: 18, color: PulseColors.accentSecondary),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        f,
+                                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.close_rounded, size: 16, color: Colors.white54),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                      onPressed: () async {
+                                        await MediaScanner.instance.removeCustomFolder(f);
+                                        if (mounted) setState(() {});
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _buildSwitchSetting(
+                  title: "Show hidden files",
+                  value: _showHiddenFiles,
+                  onChanged: (val) {
+                    setState(() => _showHiddenFiles = val);
+                    _saveSetting('show_hidden_files', val);
+                  },
+                ),
             const SizedBox(height: 20),
 
             // AUDIO GROUP
@@ -325,7 +446,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 
   Widget _buildSectionHeader(String title) {

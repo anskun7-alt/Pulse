@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../models/media_file.dart';
 import 'metadata_service.dart';
 import 'playlist_service.dart';
@@ -205,6 +206,40 @@ class MediaScanner {
     PlaylistService.instance.loadFavorites(list);
   }
 
+  List<String> getCustomFolders() {
+    try {
+      return List<String>.from(_settingsBox.get('custom_scan_folders', defaultValue: []));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> addCustomFolder(String path) async {
+    final list = getCustomFolders();
+    if (!list.contains(path)) {
+      list.add(path);
+      await _settingsBox.put('custom_scan_folders', list);
+    }
+  }
+
+  Future<void> removeCustomFolder(String path) async {
+    final list = getCustomFolders();
+    list.remove(path);
+    await _settingsBox.put('custom_scan_folders', list);
+  }
+
+  Future<String?> pickAndAddCustomFolder() async {
+    final selectedDir = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Select Folder with Music or Videos',
+    );
+    if (selectedDir != null && selectedDir.isNotEmpty) {
+      await addCustomFolder(selectedDir);
+      await scan();
+      return selectedDir;
+    }
+    return null;
+  }
+
   Future<void> scan() async {
     if (isScanning.value) return;
     
@@ -238,10 +273,46 @@ class MediaScanner {
     scanStatus.value = "Finding media folders...";
     final List<Directory> rootDirectories = [];
 
-    try {
-      rootDirectories.add(Directory('/storage/emulated/0'));
-    } catch (e) {
-      debugPrint("Error establishing roots: $e");
+    if (Platform.isAndroid) {
+      try {
+        final internal = Directory('/storage/emulated/0');
+        if (internal.existsSync()) rootDirectories.add(internal);
+        final storage = Directory('/storage');
+        if (storage.existsSync()) {
+          for (var entity in storage.listSync(recursive: false)) {
+            if (entity is Directory && !entity.path.contains('emulated') && !entity.path.contains('self')) {
+              rootDirectories.add(entity);
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("Error establishing Android roots: $e");
+      }
+    } else if (Platform.isWindows) {
+      final userProfile = Platform.environment['USERPROFILE'];
+      if (userProfile != null) {
+        for (var sub in ['Music', 'Videos', 'Downloads', 'Desktop', 'Documents']) {
+          final dir = Directory(p.join(userProfile, sub));
+          if (dir.existsSync()) rootDirectories.add(dir);
+        }
+      }
+      for (var letter in ['C', 'D', 'E', 'F', 'G']) {
+        final driveDir = Directory('$letter:\\');
+        if (driveDir.existsSync()) {
+          for (var sub in ['Music', 'Videos', 'Media', 'Songs', 'Movies', 'GMWF']) {
+            final mediaDir = Directory('$letter:\\$sub');
+            if (mediaDir.existsSync()) rootDirectories.add(mediaDir);
+          }
+        }
+      }
+    }
+
+    // Add all user-defined custom folders
+    for (var customPath in getCustomFolders()) {
+      final customDir = Directory(customPath);
+      if (customDir.existsSync() && !rootDirectories.any((d) => d.path == customDir.path)) {
+        rootDirectories.add(customDir);
+      }
     }
 
     final foundPaths = <String>[];

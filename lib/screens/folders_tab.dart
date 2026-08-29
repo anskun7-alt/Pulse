@@ -49,24 +49,34 @@ class _FoldersTabState extends State<FoldersTab> {
     final pins = List<String>.from(_settingsBox.get('pinned_folders', defaultValue: []));
     _pinnedFolders = pins.map((p) => Directory(p)).toList();
 
-    // Default to device storage root
+    // Default to device storage root or music directory
     if (Platform.isAndroid) {
       _navigateTo(Directory('/storage/emulated/0'));
+    } else if (Platform.isWindows) {
+      final userProfile = Platform.environment['USERPROFILE'];
+      final musicDir = userProfile != null ? Directory('$userProfile\\Music') : null;
+      if (musicDir != null && musicDir.existsSync()) {
+        _navigateTo(musicDir);
+      } else {
+        _navigateTo(Directory('C:\\'));
+      }
     } else {
       // Fallback
-      final docDir = await getTemporaryDirectory(); // Fallback safely
+      final docDir = await getTemporaryDirectory();
       _navigateTo(docDir.parent);
     }
   }
 
   Future<void> _selectFolder() async {
     final String? selectedPath = await FilePicker.getDirectoryPath(
-      dialogTitle: 'Select media folder',
+      dialogTitle: 'Select media folder to browse',
     );
-    if (selectedPath != null) {
+    if (selectedPath != null && selectedPath.isNotEmpty) {
       final selectedDir = Directory(selectedPath);
       if (selectedDir.existsSync()) {
         _navigateTo(selectedDir);
+        // Automatically register to custom scanned folders
+        await MediaScanner.instance.addCustomFolder(selectedPath);
       }
     }
   }
