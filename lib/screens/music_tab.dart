@@ -1,11 +1,14 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import '../models/media_file.dart';
 import '../services/media_scanner.dart';
 import '../services/playlist_service.dart';
 import '../widgets/media_card.dart';
 import '../widgets/context_bottom_sheet.dart';
 import '../widgets/add_to_playlist_sheet.dart';
+import '../widgets/animated_widgets.dart';
 import '../services/playback_service.dart';
 import '../players/video_player_screen.dart';
 import '../theme/colors.dart';
@@ -290,11 +293,23 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
 
   Widget _buildSongsList(List<MediaFile> tracks, PlaybackService playbackService) {
     if (tracks.isEmpty) {
-      return Center(
-        child: Text(
-          _searchQuery.isNotEmpty ? "No matching songs." : "No music files discovered.",
-          style: PulseTypography.bodyLarge,
-        ),
+      return PulseEmptyState(
+        icon: Icons.music_note_rounded,
+        title: _searchQuery.isNotEmpty ? "No matching songs" : "No Music Found",
+        subtitle: _searchQuery.isNotEmpty
+            ? "Try searching for a different track title or artist"
+            : "Scan your device to find and index your music library.",
+        action: _searchQuery.isEmpty
+            ? ElevatedButton.icon(
+                onPressed: () => MediaScanner.instance.scan(),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text("Scan Music"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: PulseColors.accentPrimary,
+                  foregroundColor: Colors.white,
+                ),
+              )
+            : null,
       );
     }
 
@@ -361,11 +376,41 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
               _handleTrackTap(track, tracks);
             }
           },
-          // Pass selection flag to MediaCard
-          isSelected: _isSelectionMode.value && _selectedItems.value.contains(track),
-
+          onMore: () {
+            showModalBottomSheet(
+              context: context,
+              backgroundColor: Colors.transparent,
+              builder: (context) => ContextBottomSheet(
+                file: track,
+                onAddToPlaylist: () {
+                  Navigator.pop(context);
+                  showModalBottomSheet(
+                    context: context,
+                    backgroundColor: Colors.transparent,
+                    builder: (sheetCtx) => AddToPlaylistSheet(
+                      file: track,
+                      onPlaylistCreated: (newPlaylist) async {
+                        await PlaylistService.instance.addToPlaylist(newPlaylist.id, track.path);
+                        Navigator.pop(sheetCtx);
+                        PulseCelebrationDialog.show(
+                          context,
+                          title: 'Playlist Created!',
+                          description: 'Added "${track.title}" to "${newPlaylist.name}".',
+                        );
+                      },
+                    ),
+                  );
+                },
               ),
             );
+          },
+          isSelectionMode: _isSelectionMode.value,
+          isSelected: _selectedItems.value.contains(track),
+        ),
+            )
+                .animate()
+                .fadeIn(duration: 200.ms, delay: (min(index, 10) * 25).ms)
+                .slideX(begin: 0.04, end: 0, duration: 200.ms, curve: Curves.easeOutCubic);
           },
         );
       },
@@ -383,17 +428,21 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
     final albums = albumMap.keys.toList();
 
     if (albums.isEmpty) {
-      return Center(child: Text("No albums available.", style: PulseTypography.bodyLarge));
+      return const PulseEmptyState(
+        icon: Icons.album_rounded,
+        title: "No Albums Discovered",
+        subtitle: "Albums will appear here once music tags are scanned.",
+      );
     }
 
     return GridView.builder(
+      padding: const EdgeInsets.only(left: 20, right: 20, top: 12, bottom: 168),
       itemCount: albums.length,
-      padding: const EdgeInsets.only(left: 20, right: 20, top: 20, bottom: 180),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
-        childAspectRatio: 0.85,
+        mainAxisSpacing: 20,
+        childAspectRatio: 0.8,
       ),
       itemBuilder: (context, index) {
         final albumName = albums[index];
@@ -453,7 +502,10 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
               ),
             ],
           ),
-        );
+        )
+            .animate()
+            .fadeIn(duration: 220.ms, delay: (min(index, 8) * 30).ms)
+            .scale(begin: const Offset(0.95, 0.95), end: const Offset(1, 1), duration: 220.ms, curve: Curves.easeOutBack);
       },
     );
   }
@@ -469,7 +521,11 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
     final artists = artistMap.keys.toList();
 
     if (artists.isEmpty) {
-      return Center(child: Text("No artists available.", style: PulseTypography.bodyLarge));
+      return const PulseEmptyState(
+        icon: Icons.person_rounded,
+        title: "No Artists Found",
+        subtitle: "Artists will appear here once audio files are indexed.",
+      );
     }
 
     return ListView.builder(
@@ -504,7 +560,10 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
             // Play all tracks of this artist
             PlaybackService.instance.playTrack(artistTracks.first, newQueue: artistTracks);
           },
-        );
+        )
+            .animate()
+            .fadeIn(duration: 200.ms, delay: (min(index, 10) * 25).ms)
+            .slideX(begin: 0.04, end: 0, duration: 200.ms, curve: Curves.easeOutCubic);
       },
     );
   }

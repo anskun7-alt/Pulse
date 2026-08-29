@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_media_metadata/flutter_media_metadata.dart';
 import 'package:hive/hive.dart';
 import '../models/media_file.dart';
@@ -10,6 +12,7 @@ import 'video_folder_screen.dart';
 import '../widgets/media_card.dart';
 import '../widgets/context_bottom_sheet.dart';
 import '../widgets/action_toolbar.dart';
+import '../widgets/animated_widgets.dart';
 import '../players/video_player_screen.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
@@ -481,7 +484,10 @@ class _VideosTabState extends State<VideosTab> {
                                         },
                                         onLongPress: () =>
                                             _selection.toggle(video.path),
-                                      );
+                                      )
+                                          .animate()
+                                          .fadeIn(duration: 220.ms, delay: (min(index, 8) * 30).ms)
+                                          .slideY(begin: 0.08, end: 0, duration: 220.ms, curve: Curves.easeOutCubic);
                                     },
                                     childCount: allVideos.length,
                                   ),
@@ -518,17 +524,17 @@ class _VideosTabState extends State<VideosTab> {
                                               decoration: BoxDecoration(
                                                 color: const Color(
                                                         0xFFE5E5EF)
-                                                    .withOpacity(0.08),
+                                                    .withValues(alpha: 0.08),
                                                 borderRadius:
                                                     BorderRadius.circular(
-                                                        10),
+                                                        14),
                                               ),
                                               child: const Icon(
                                                   Icons.folder_rounded,
-                                                  size: 28,
-                                                  color: Colors.grey),
+                                                  color: Colors.white,
+                                                  size: 24),
                                             ),
-                                            const SizedBox(width: 16),
+                                            const SizedBox(width: 14),
                                             Expanded(
                                               child: Column(
                                                 crossAxisAlignment:
@@ -537,12 +543,8 @@ class _VideosTabState extends State<VideosTab> {
                                                 children: [
                                                   Text(folder.name,
                                                       style: PulseTypography
-                                                          .bodyLarge
-                                                          .copyWith(
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .bold)),
-                                                  const SizedBox(height: 4),
+                                                          .bodyLarge),
+                                                  const SizedBox(height: 2),
                                                   Text(
                                                       '${folder.videos.length} Items',
                                                       style: PulseTypography
@@ -609,13 +611,42 @@ class _VideosTabState extends State<VideosTab> {
                                         },
                                         onLongPress: () =>
                                             _selection.toggle(video.path),
-                                      );
+                                      )
+                                          .animate()
+                                          .fadeIn(duration: 220.ms, delay: (min(index, 8) * 30).ms)
+                                          .slideY(begin: 0.08, end: 0, duration: 220.ms, curve: Curves.easeOutCubic);
                                     },
                                     childCount: allVideos.length,
                                   ),
                                 ),
                               ),
                           ],
+
+                          // Empty state if nothing found
+                          if (allVideos.isEmpty && folders.isEmpty)
+                            SliverFillRemaining(
+                              hasScrollBody: false,
+                              child: PulseEmptyState(
+                                icon: Icons.video_library_rounded,
+                                title: _searchQuery.isNotEmpty
+                                    ? 'No videos match "$_searchQuery"'
+                                    : 'No Videos Found',
+                                subtitle: _searchQuery.isNotEmpty
+                                    ? 'Try searching with a different keyword'
+                                    : 'Scan your device or add videos to start watching.',
+                                action: _searchQuery.isEmpty
+                                    ? ElevatedButton.icon(
+                                        onPressed: () => scanner.scan(),
+                                        icon: const Icon(Icons.refresh_rounded),
+                                        label: const Text('Scan Media'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: PulseColors.accentPrimary,
+                                          foregroundColor: Colors.white,
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                            ),
 
                           // Bottom padding
                           SliverToBoxAdapter(

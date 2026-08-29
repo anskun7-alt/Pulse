@@ -1236,6 +1236,42 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
                       const SizedBox(height: 16),
 
+                      // Audio Tracks
+                      Text('Audio Tracks', style: PulseTypography.bodyLarge),
+                      const SizedBox(height: 8),
+                      Builder(
+                        builder: (ctx) {
+                          final tracks = _betterPlayerController.betterPlayerAsmsAudioTracks;
+                          if (tracks == null || tracks.isEmpty) {
+                            return Text('Default audio track (1 stream active)',
+                                style: PulseTypography.bodySmall.copyWith(color: PulseColors.textSecondary));
+                          }
+                          return Wrap(
+                            spacing: 8,
+                            children: tracks.map((track) {
+                              final isSel = _betterPlayerController.betterPlayerAsmsAudioTrack == track;
+                              final name = track.label ?? track.language ?? 'Track ${track.id ?? 1}';
+                              return ChoiceChip(
+                                label: Text(name),
+                                selected: isSel,
+                                onSelected: (sel) {
+                                  if (sel) {
+                                    _betterPlayerController.setAudioTrack(track);
+                                    setSheetState(() {});
+                                    _showOverlayHUD('Audio: $name', 1.0);
+                                  }
+                                },
+                                selectedColor: PulseColors.accentSecondary,
+                                backgroundColor: PulseColors.surfaceHigh,
+                                labelStyle: TextStyle(color: isSel ? Colors.black : Colors.white),
+                              );
+                            }).toList(),
+                          );
+                        },
+                      ),
+
+                      const SizedBox(height: 16),
+
                       // Reset to Defaults
                       ElevatedButton.icon(
                         onPressed: () {
@@ -1520,9 +1556,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     if (_isInitialized) {
       _betterPlayerController.pause();
     }
-    // Force portrait orientation immediately to trigger clean transition
+    // Restore all orientations immediately for clean transition back to app
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
     ]);
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
