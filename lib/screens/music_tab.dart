@@ -50,7 +50,7 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -264,6 +264,7 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
                         indicatorSize: TabBarIndicatorSize.label,
                         tabs: const [
                           Tab(text: "Songs"),
+                          Tab(text: "History"),
                           Tab(text: "Albums"),
                           Tab(text: "Artists"),
                         ],
@@ -280,6 +281,7 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
                   controller: _tabController,
                   children: [
                     _buildSongsList(tracks, playbackService),
+                    _buildHistoryList(allFiles, playbackService),
                     _buildAlbumsGrid(tracks),
                     _buildArtistsList(tracks),
                   ],
@@ -536,6 +538,75 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
             .slideX(begin: 0.04, end: 0, duration: 200.ms, curve: Curves.easeOutCubic);
       },
     );
+  }
+
+  Widget _buildHistoryList(List<MediaFile> allFiles, PlaybackService playbackService) {
+    final history = PlaylistService.instance.getRecentlyPlayed(allFiles);
+
+    if (history.isEmpty) {
+      return const PulseEmptyState(
+        icon: Icons.history_rounded,
+        title: "No History Yet",
+        subtitle: "Songs and videos you play will appear here for quick replay.",
+      );
+    }
+
+    return ValueListenableBuilder<MediaFile?>(
+      valueListenable: playbackService.currentTrack,
+      builder: (context, currentTrack, child) {
+        return ListView.builder(
+          itemCount: history.length,
+          padding: const EdgeInsets.only(left: 20, right: 20, top: 8, bottom: 168),
+          itemBuilder: (context, index) {
+            final track = history[index];
+            final isPlayingThis = currentTrack?.path == track.path;
+
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              decoration: BoxDecoration(
+                color: isPlayingThis
+                    ? PulseColors.accentPrimary.withValues(alpha: 0.08)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isPlayingThis
+                      ? PulseColors.accentPrimary.withValues(alpha: 0.3)
+                      : Colors.transparent,
+                  width: 1,
+                ),
+              ),
+              child: MediaCard(
+                file: track,
+                isGrid: false,
+                isSelectionMode: false,
+                isSelected: false,
+                onTap: () {
+                  if (track.isVideo) {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => VideoPlayerScreen(
+                          file: track,
+                          playlist: history.where((f) => f.isVideo).toList(),
+                        ),
+                      ),
+                    );
+                  } else {
+                    playbackService.playTrack(track, newQueue: history);
+                  }
+                },
+                onLongPress: () {},
+              ),
+            )
+                .animate()
+                .fadeIn(duration: 200.ms, delay: (min(index, 10) * 25).ms)
+                .slideX(begin: 0.04, end: 0, duration: 200.ms, curve: Curves.easeOutCubic);
+          },
+        );
+      },
+    );
+  }
+
   void _handleTrackTap(MediaFile track, List<MediaFile> allTracks) {
     PlaybackService.instance.playTrack(track, newQueue: allTracks);
   }

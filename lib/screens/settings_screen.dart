@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import '../services/media_scanner.dart';
+import '../services/playback_service.dart';
 import '../services/update_service.dart';
 import '../widgets/equalizer_screen.dart';
 import '../theme/colors.dart';

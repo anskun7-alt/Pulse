@@ -63,10 +63,17 @@ class AppReleaseInfo {
     // Find best asset for platform
     ReleaseAsset? bestAsset;
     if (Platform.isAndroid) {
-      bestAsset = assetsList.firstWhere(
-        (a) => a.name.toLowerCase().endsWith('.apk'),
-        orElse: () => assetsList.isNotEmpty ? assetsList.first : ReleaseAsset(name: '', downloadUrl: '', size: 0),
-      );
+      final apkAssets = assetsList.where((a) => a.name.toLowerCase().endsWith('.apk')).toList();
+      if (apkAssets.isNotEmpty) {
+        // Prefer modern 64-bit split APK, then universal, then any APK
+        bestAsset = apkAssets.firstWhere(
+          (a) => a.name.toLowerCase().contains('arm64'),
+          orElse: () => apkAssets.firstWhere(
+            (a) => a.name.toLowerCase().contains('universal'),
+            orElse: () => apkAssets.first,
+          ),
+        );
+      }
     } else if (Platform.isWindows) {
       bestAsset = assetsList.firstWhere(
         (a) => a.name.toLowerCase().endsWith('.exe') || a.name.toLowerCase().endsWith('.msix') || a.name.toLowerCase().endsWith('.zip'),
