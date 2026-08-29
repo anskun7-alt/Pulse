@@ -11,6 +11,8 @@ import 'settings_screen.dart';
 import 'package:hive/hive.dart';
 import '../services/media_scanner.dart';
 import '../services/update_service.dart';
+import '../services/shortcuts_service.dart';
+import '../widgets/network_stream_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -104,19 +106,29 @@ class _HomeScreenState extends State<HomeScreen> {
         return Scaffold(
           extendBody: true, // Let the body flow beneath the nav bars
           backgroundColor: PulseColors.background,
-          body: WillPopScope(
-            onWillPop: () async {
-              final now = DateTime.now();
-              if (_lastBackPressTime == null || now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
-                _lastBackPressTime = now;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Press back again to exit'), duration: Duration(seconds: 2)),
-                );
-                return false;
-              }
-              return true; // exit app
+          body: KeyboardListener(
+            focusNode: FocusNode()..requestFocus(),
+            autofocus: true,
+            onKeyEvent: (event) {
+              PulseShortcuts.handleKeyEvent(
+                event,
+                context,
+                onOpenNetworkStream: () => NetworkStreamDialog.show(context),
+              );
             },
-            child: Stack(
+            child: WillPopScope(
+              onWillPop: () async {
+                final now = DateTime.now();
+                if (_lastBackPressTime == null || now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
+                  _lastBackPressTime = now;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Press back again to exit'), duration: Duration(seconds: 2)),
+                  );
+                  return false;
+                }
+                return true; // exit app
+              },
+              child: Stack(
               children: [
                 // Screen content
                 Positioned.fill(
@@ -146,8 +158,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-        );
-      },
-    );
+        ),
+      );
+    },
+  );
   }
 }

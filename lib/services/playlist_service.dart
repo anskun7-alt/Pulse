@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import 'package:uuid/uuid.dart';
@@ -210,5 +211,68 @@ class PlaylistService {
     return allFiles.where((f) {
       return now.difference(f.addedDate).inDays <= 7;
     }).toList();
+  }
+
+  /// Export playlist to .m3u format
+  Future<File?> exportPlaylistToM3U(Playlist playlist, String targetDirectory) async {
+    try {
+      final safeName = playlist.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final file = File('$targetDirectory${Platform.pathSeparator}$safeName.m3u');
+      final buffer = StringBuffer();
+      buffer.writeln('#EXTM3U');
+      buffer.writeln('#PLAYLIST:${playlist.name}');
+
+      final allFiles = MediaScanner.instance.allFiles.value;
+      final pathMap = {for (var f in allFiles) f.path: f};
+
+      for (var path in playlist.mediaIds) {
+        final media = pathMap[path];
+        if (media != null) {
+          buffer.writeln('#EXTINF:${media.duration.inSeconds},${media.artist} - ${media.title}');
+          buffer.writeln(media.path);
+        } else {
+          buffer.writeln(path);
+        }
+      }
+
+      await file.writeAsString(buffer.toString());
+      return file;
+    } catch (e) {
+      debugPrint('Error exporting playlist to M3U: $e');
+      return null;
+    }
+  }
+
+  /// Import playlist from .m3u/.m3u8 file
+  Future<Playlist?> importPlaylistFromM3U(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return null;
+
+      final lines = await file.readAsLines();
+      final List<String> paths = [];
+      String playlistName = file.uri.pathSegments.last.replaceAll(RegExp(r'\.m3u8?$|\.pls$', caseSensitive: false), '');
+
+      for (var line in lines) {
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) continue;
+        if (trimmed.startsWith('#PLAYLIST:')) {
+          playlistName = trimmed.substring(10).trim();
+        } else if (!trimmed.startsWith('#')) {
+          paths.add(trimmed);
+        }
+      }
+
+      if (paths.isEmpty) return null;
+
+      final playlist = await createPlaylist(playlistName);
+      for (var path in paths) {
+        await addToPlaylist(playlist.id, path);
+      }
+      return playlist;
+    } catch (e) {
+      debugPrint('Error importing playlist from M3U: $e');
+      return null;
+    }
   }
 }

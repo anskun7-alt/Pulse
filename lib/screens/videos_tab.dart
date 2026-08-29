@@ -15,6 +15,7 @@ import '../widgets/action_toolbar.dart';
 import '../widgets/animated_widgets.dart';
 import '../widgets/continue_playing_card.dart';
 import '../players/video_player_screen.dart';
+import '../widgets/network_stream_dialog.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -335,6 +336,14 @@ class _VideosTabState extends State<VideosTab> {
                                                   _selection.selectAll(
                                                       allVideos.map(
                                                           (f) => f.path)),
+                                            ),
+                                          if (!_isSearching && !isSelectionMode)
+                                            IconButton(
+                                              icon: const Icon(
+                                                  Icons.stream_rounded,
+                                                  color: Colors.white),
+                                              tooltip: 'Open Network Stream (Ctrl+N)',
+                                              onPressed: () => NetworkStreamDialog.show(context),
                                             ),
                                           if (!_isSearching && !isSelectionMode)
                                             IconButton(

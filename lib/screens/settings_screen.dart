@@ -4,6 +4,7 @@ import '../services/media_scanner.dart';
 import '../services/playback_service.dart';
 import '../services/update_service.dart';
 import '../widgets/equalizer_screen.dart';
+import 'shortcuts_screen.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -161,6 +162,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onChanged: (val) {
                     setState(() => _crossfadeDuration = val);
                     _saveSetting('crossfade_duration', val);
+                  },
+                ),
+                const SizedBox(height: 20),
+
+                // CONTROLS & SHORTCUTS GROUP
+                _buildSectionHeader("CONTROLS & SHORTCUTS"),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: PulseColors.accentPrimary.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.keyboard_rounded, color: PulseColors.accentPrimary, size: 20),
+                  ),
+                  title: Text("Shortcuts & Gestures Guide", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+                  subtitle: Text("VLC desktop hotkeys and mobile touch gestures", style: TextStyle(color: PulseColors.textSecondary, fontSize: 12)),
+                  trailing: Icon(Icons.chevron_right_rounded, color: PulseColors.textSecondary),
+                  onTap: () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ShortcutsScreen()));
                   },
                 ),
                 const SizedBox(height: 20),

@@ -9,6 +9,8 @@ import '../services/playlist_service.dart';
 import '../services/playback_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'playlist_detail_screen.dart';
 import '../widgets/interactive_elements.dart';
 
@@ -84,6 +86,54 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
         );
       },
     );
+  }
+
+  Future<void> _importM3U() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['m3u', 'm3u8', 'pls'],
+        dialogTitle: 'Select M3U / PLS Playlist to Import',
+      );
+      if (result != null && result.files.single.path != null) {
+        final imported = await _playlistService.importPlaylistFromM3U(result.files.single.path!);
+        if (imported != null && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("Imported '${imported.name}' with ${imported.mediaIds.length} tracks"),
+              backgroundColor: PulseColors.success,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error importing playlist: $e"), backgroundColor: PulseColors.danger),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportM3U(Playlist playlist) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final exported = await _playlistService.exportPlaylistToM3U(playlist, dir.path);
+      if (exported != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Exported to ${exported.path}"),
+            backgroundColor: PulseColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error exporting playlist: $e"), backgroundColor: PulseColors.danger),
+        );
+      }
+    }
   }
 
   void _navigateToPlaylist(dynamic playlist, {required bool isSmart, String? smartType}) {
@@ -310,6 +360,19 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                     ),
                     Row(
                       children: [
+                        IconButton(
+                          icon: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: PulseColors.surfaceHigh,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.file_upload_outlined, color: PulseColors.accentSecondary, size: 20),
+                          ),
+                          onPressed: _importM3U,
+                          tooltip: "Import M3U / PLS",
+                        ),
+                        const SizedBox(width: 6),
                         IconButton(
                           icon: Container(
                             padding: const EdgeInsets.all(8),
@@ -552,11 +615,23 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                                             padding: EdgeInsets.zero,
                                             constraints: const BoxConstraints(),
                                             onSelected: (val) async {
-                                              if (val == 'delete') {
+                                              if (val == 'export') {
+                                                await _exportM3U(playlist);
+                                              } else if (val == 'delete') {
                                                 await _playlistService.deletePlaylist(playlist.id);
                                               }
                                             },
                                             itemBuilder: (ctx) => [
+                                              const PopupMenuItem(
+                                                value: 'export',
+                                                child: Row(
+                                                  children: [
+                                                    Icon(Icons.file_download_outlined, color: Colors.white70, size: 20),
+                                                    SizedBox(width: 8),
+                                                    Text('Export M3U Playlist', style: TextStyle(color: Colors.white)),
+                                                  ],
+                                                ),
+                                              ),
                                               const PopupMenuItem(
                                                 value: 'delete',
                                                 child: Row(
