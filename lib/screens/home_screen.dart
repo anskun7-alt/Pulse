@@ -7,7 +7,9 @@ import 'music_tab.dart';
 import 'folders_tab.dart';
 import 'playlists_tab.dart';
 import 'settings_screen.dart';
+import 'package:hive/hive.dart';
 import '../services/media_scanner.dart';
+import '../services/update_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -26,7 +28,22 @@ class _HomeScreenState extends State<HomeScreen> {
     // Scan library automatically on launch
     WidgetsBinding.instance.addPostFrameCallback((_) {
       MediaScanner.instance.scan();
+      _checkAutoUpdate();
     });
+  }
+
+  Future<void> _checkAutoUpdate() async {
+    try {
+      final box = await Hive.openBox('settings_box');
+      final autoCheck = box.get('auto_check_updates', defaultValue: true) as bool;
+      if (autoCheck && mounted) {
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) {
+            UpdateService.instance.checkAndShowPrompt(context, isManual: false);
+          }
+        });
+      }
+    } catch (_) {}
   }
 
   Widget _buildBody() {

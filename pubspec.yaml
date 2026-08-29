@@ -46,6 +46,11 @@ dependencies:
   blur: ^3.1.0
   file_picker: ^11.0.2
 
+  # App updater & file opening
+  open_filex: ^4.5.0
+  package_info_plus: ^8.0.0
+  url_launcher: ^6.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

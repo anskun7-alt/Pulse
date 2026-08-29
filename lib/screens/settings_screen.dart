@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import '../services/media_scanner.dart';
+import '../services/update_service.dart';
 import '../widgets/equalizer_screen.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
@@ -33,6 +34,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _bassBoostVal = 60.0;
   bool _stereoWidener = false;
 
+  String _currentVersion = '1.0.0';
+  bool _autoCheckUpdates = true;
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +45,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     _settingsBox = await Hive.openBox('settings_box');
+    final version = await UpdateService.instance.getCurrentVersion();
     setState(() {
       _defaultSpeed = _settingsBox.get('default_speed', defaultValue: 1.0) as double;
       _skipInterval = _settingsBox.get('skip_interval', defaultValue: 10) as int;
@@ -57,6 +62,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       _bassBoostVal = _settingsBox.get('bass_boost_val', defaultValue: 60.0) as double;
       _stereoWidener = _settingsBox.get('stereo_widener', defaultValue: false) as bool;
+
+      _currentVersion = version;
+      _autoCheckUpdates = _settingsBox.get('auto_check_updates', defaultValue: true) as bool;
 
       _isLoading = false;
     });
@@ -249,13 +257,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 20),
 
             // ABOUT GROUP
-            _buildSectionHeader("ABOUT"),
+            _buildSectionHeader("ABOUT & UPDATES"),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text("App Version", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+              subtitle: Text("Pulse v$_currentVersion", style: PulseTypography.bodySmall.copyWith(color: PulseColors.textSecondary)),
+              trailing: ElevatedButton.icon(
+                onPressed: () {
+                  UpdateService.instance.checkAndShowPrompt(context, isManual: true);
+                },
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text("Check Updates"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: PulseColors.accentPrimary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+            _buildSwitchSetting(
+              title: "Auto-check for updates",
+              value: _autoCheckUpdates,
+              onChanged: (val) {
+                setState(() => _autoCheckUpdates = val);
+                _saveSetting('auto_check_updates', val);
+              },
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8.0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text("Pulse v1.0.0", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+                  Text("Media Cache", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
                   ElevatedButton(
                     onPressed: () async {
                       final box = await Hive.openBox('media_files_box');
