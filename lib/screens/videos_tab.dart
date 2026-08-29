@@ -13,6 +13,7 @@ import '../widgets/media_card.dart';
 import '../widgets/context_bottom_sheet.dart';
 import '../widgets/action_toolbar.dart';
 import '../widgets/animated_widgets.dart';
+import '../widgets/continue_playing_card.dart';
 import '../players/video_player_screen.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
@@ -371,6 +372,11 @@ class _VideosTabState extends State<VideosTab> {
                             ),
                           ),
 
+                          // ── Continue watching hero card ────────────────
+                          const SliverToBoxAdapter(
+                            child: ContinuePlayingCard(),
+                          ),
+
                           // ── Empty state ─────────────────────────────────
                           if (folders.isEmpty && allVideos.isEmpty)
                             SliverFillRemaining(
@@ -391,9 +397,21 @@ class _VideosTabState extends State<VideosTab> {
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 20, vertical: 10),
-                                  child: Text('Folders',
-                                      style:
-                                          PulseTypography.displayMedium),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text('Folders',
+                                          style: PulseTypography.displayMedium),
+                                      Text(
+                                        'View all',
+                                        style: TextStyle(
+                                          color: PulseColors.accentPrimary,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                               SliverPadding(
@@ -684,32 +702,65 @@ class _VideosTabState extends State<VideosTab> {
 // ─── Folder card widget ───────────────────────────────────────────────────────
 class _FolderCard extends StatelessWidget {
   final VideoFolder folder;
-  const _FolderCard({required this.folder});
+  final VoidCallback? onMore;
+  const _FolderCard({required this.folder, this.onMore});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: PulseColors.surface,
+        color: PulseColors.surfaceHigh.withValues(alpha: 0.7),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF1E1E30), width: 1),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 1),
       ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
         children: [
-          const Icon(Icons.folder_rounded, size: 40, color: Colors.grey),
-          const SizedBox(height: 8),
-          Text(
-            folder.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: PulseTypography.bodyLarge
-                .copyWith(fontWeight: FontWeight.bold),
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFF8B5CF6).withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.folder_rounded,
+              size: 26,
+              color: Color(0xFFA78BFA),
+            ),
           ),
-          Text('${folder.videos.length} Items',
-              style: PulseTypography.bodySmall),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  folder.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: PulseTypography.bodyLarge.copyWith(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${folder.videos.length} items',
+                  style: TextStyle(
+                    color: PulseColors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.more_vert_rounded, size: 18, color: Colors.white54),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: onMore,
+          ),
         ],
       ),
     );

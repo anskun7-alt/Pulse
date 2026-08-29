@@ -170,7 +170,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _buildDropDownSetting<String>(
                   title: "Theme",
                   value: _themeMode,
-                  items: ['Dark', 'AMOLED', 'Creme', 'Light', 'System'],
+                  items: ['Dark', 'AMOLED', 'RDR2', 'Manga', 'Anime', 'Gamer', 'Turkish', 'Creme', 'Light', 'System'],
+                  labels: {
+                    'Dark': '🌙 Pulse Dark',
+                    'AMOLED': '🖤 AMOLED Pure Black',
+                    'RDR2': '🤠 Red Dead Outlaw',
+                    'Manga': '📖 Shonen Manga',
+                    'Anime': '🌸 Cyber Sakura Anime',
+                    'Gamer': '🎮 Gamer Battlestation',
+                    'Turkish': '🇹🇷 Ottoman Turkish',
+                    'Creme': '☕ Warm Creme',
+                    'Light': '☀️ Soft Light',
+                    'System': '⚙️ System Default',
+                  },
                   onChanged: (val) {
                     if (val != null) {
                       setState(() => _themeMode = val);

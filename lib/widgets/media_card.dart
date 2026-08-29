@@ -14,6 +14,7 @@ class MediaCard extends StatelessWidget {
   final bool isSelected;
   // When true, renders a checkbox overlay and uses selection-mode tap behaviour.
   final bool isSelectionMode;
+  final VoidCallback? onMore;
 
   const MediaCard({
     Key? key,
@@ -23,6 +24,7 @@ class MediaCard extends StatelessWidget {
     required this.onLongPress,
     this.isSelected = false,
     this.isSelectionMode = false,
+    this.onMore,
   }) : super(key: key);
 
   @override
@@ -281,12 +283,12 @@ class MediaCard extends StatelessWidget {
                       child: _SelectionCheckbox(selected: isSelected),
                     ),
 
-                  // Thumbnail
+                  // Thumbnail with duration overlay
                   Container(
                     width: thumbWidth,
                     height: thumbHeight,
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(14),
                       boxShadow: file.isFavorite || isCurrent
                           ? [
                               BoxShadow(
@@ -298,40 +300,63 @@ class MediaCard extends StatelessWidget {
                           : null,
                     ),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: RepaintBoundary(
-                        child: file.isVideo
-                            ? VideoThumbnailWidget(
-                                videoPath: file.path,
-                                width: thumbWidth,
-                                height: thumbHeight,
-                              )
-                            : ValueListenableBuilder<bool>(
-                                valueListenable: PlaybackService.instance.isPlaying,
-                                builder: (context, isPlaying, _) {
-                                  final isSpinning = isCurrent && isPlaying;
-                                  
-                                  final thumbnailChild = file.albumArtPath != null && file.albumArtPath!.isNotEmpty
-                                      ? Image.file(
-                                          File(file.albumArtPath!),
-                                          fit: BoxFit.cover,
-                                          cacheWidth: 160,
-                                          cacheHeight: 160,
-                                          errorBuilder: (context, error, stackTrace) => _buildPlaceholder(28),
-                                        )
-                                      : _buildPlaceholder(28);
+                      borderRadius: BorderRadius.circular(14),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          file.isVideo
+                              ? VideoThumbnailWidget(
+                                  videoPath: file.path,
+                                  width: thumbWidth,
+                                  height: thumbHeight,
+                                )
+                              : ValueListenableBuilder<bool>(
+                                  valueListenable: PlaybackService.instance.isPlaying,
+                                  builder: (context, isPlaying, _) {
+                                    final isSpinning = isCurrent && isPlaying;
+                                    
+                                    final thumbnailChild = file.albumArtPath != null && file.albumArtPath!.isNotEmpty
+                                        ? Image.file(
+                                            File(file.albumArtPath!),
+                                            fit: BoxFit.cover,
+                                            cacheWidth: 160,
+                                            cacheHeight: 160,
+                                            errorBuilder: (context, error, stackTrace) => _buildPlaceholder(28),
+                                          )
+                                        : _buildPlaceholder(28);
 
-                                  return SpinningThumbnail(
-                                    isSpinning: isSpinning,
-                                    child: thumbnailChild,
-                                  );
-                                },
+                                    return SpinningThumbnail(
+                                      isSpinning: isSpinning,
+                                      child: thumbnailChild,
+                                    );
+                                  },
+                                ),
+                          if (file.isVideo && file.duration > Duration.zero)
+                            Positioned(
+                              right: 4,
+                              bottom: 4,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.8),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  file.durationString,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
 
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 14),
 
                   // Title & subtitle
                   Expanded(
@@ -347,6 +372,7 @@ class MediaCard extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: PulseTypography.bodyLarge.copyWith(
                                   fontWeight: FontWeight.bold,
+                                  fontSize: 15,
                                   color: isCurrent ? accentColor : null,
                                 ),
                               ),
@@ -365,44 +391,63 @@ class MediaCard extends StatelessWidget {
                             ],
                           ],
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 3),
                         Text(
                           file.isVideo
                               ? _getFolderName(file.path)
                               : '${file.artist} · ${file.album}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: PulseTypography.bodyMedium.copyWith(
-                            color: isCurrent ? accentColor.withValues(alpha: 0.7) : Colors.white.withValues(alpha: 0.6),
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.65),
+                            fontSize: 12,
                           ),
                         ),
+                        if (file.isVideo) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            '${file.sizeString} · ${_formatDate(file.addedDate)}',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.4),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
 
-                  // Duration & size / favourite
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        file.durationString,
-                        style: PulseTypography.monoLabel.copyWith(
-                          color: isCurrent ? accentColor : PulseColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      if (file.isFavorite)
-                        const Icon(Icons.favorite_rounded, color: Colors.redAccent, size: 14)
-                      else
+                  // Context More Menu Button
+                  if (onMore != null)
+                    IconButton(
+                      icon: const Icon(Icons.more_vert_rounded, size: 20, color: Colors.white60),
+                      onPressed: onMore,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    )
+                  else if (!file.isVideo)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
                         Text(
-                          file.sizeString,
+                          file.durationString,
                           style: PulseTypography.monoLabel.copyWith(
-                            color: Colors.white.withValues(alpha: 0.4),
+                            color: isCurrent ? accentColor : PulseColors.textPrimary,
                           ),
                         ),
-                    ],
-                  ),
+                        const SizedBox(height: 4),
+                        if (file.isFavorite)
+                          const Icon(Icons.favorite_rounded, color: Colors.redAccent, size: 14)
+                        else
+                          Text(
+                            file.sizeString,
+                            style: PulseTypography.monoLabel.copyWith(
+                              color: Colors.white.withValues(alpha: 0.4),
+                            ),
+                          ),
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -452,6 +497,11 @@ class MediaCard extends StatelessWidget {
     } catch (_) {
       return 'Videos';
     }
+  }
+
+  String _formatDate(DateTime date) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${date.day} ${months[date.month - 1]}';
   }
 }
 
