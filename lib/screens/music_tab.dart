@@ -606,10 +606,6 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
       },
     );
   }
-
-  void _handleTrackTap(MediaFile track, List<MediaFile> allTracks) {
-    PlaybackService.instance.playTrack(track, newQueue: allTracks);
-  }
 }
 
 class _SliverTabHeaderDelegate extends SliverPersistentHeaderDelegate {
