@@ -341,72 +341,38 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
               child: MediaCard(
                 file: track,
                 isGrid: false,
-          // Long press toggles selection mode
-          onLongPress: () {
-            if (!_isSelectionMode.value) {
-              _isSelectionMode.value = true;
-              _selectedItems.value = {track};
-            } else {
-              // Toggle selection
-              if (_selectedItems.value.contains(track)) {
-                _selectedItems.value.remove(track);
-                if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
-              } else {
-                _selectedItems.value.add(track);
-              }
-              // Reassign to trigger ValueNotifier
-              _selectedItems.value = Set.from(_selectedItems.value);
-            }
-            setState(() {});
-          },
-          // Tap behavior depends on selection mode
-          onTap: () {
-            if (_isSelectionMode.value) {
-              // Toggle selection on tap
-              if (_selectedItems.value.contains(track)) {
-                _selectedItems.value.remove(track);
-                if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
-              } else {
-                _selectedItems.value.add(track);
-              }
-              // Reassign to trigger ValueNotifier
-              _selectedItems.value = Set.from(_selectedItems.value);
-              setState(() {});
-            } else {
-              _handleTrackTap(track, tracks);
-            }
-          },
-          onMore: () {
-            showModalBottomSheet(
-              context: context,
-              backgroundColor: Colors.transparent,
-              builder: (context) => ContextBottomSheet(
-                file: track,
-                onAddToPlaylist: () {
-                  Navigator.pop(context);
-                  showModalBottomSheet(
-                    context: context,
-                    backgroundColor: Colors.transparent,
-                    builder: (sheetCtx) => AddToPlaylistSheet(
-                      file: track,
-                      onPlaylistCreated: (newPlaylist) async {
-                        await PlaylistService.instance.addToPlaylist(newPlaylist.id, track.path);
-                        Navigator.pop(sheetCtx);
-                        PulseCelebrationDialog.show(
-                          context,
-                          title: 'Playlist Created!',
-                          description: 'Added "${track.title}" to "${newPlaylist.name}".',
-                        );
-                      },
-                    ),
-                  );
+                isSelectionMode: _isSelectionMode.value,
+                isSelected: _selectedItems.value.contains(track),
+                onLongPress: () {
+                  if (!_isSelectionMode.value) {
+                    _isSelectionMode.value = true;
+                    _selectedItems.value = {track};
+                  } else {
+                    if (_selectedItems.value.contains(track)) {
+                      _selectedItems.value.remove(track);
+                      if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
+                    } else {
+                      _selectedItems.value.add(track);
+                    }
+                    _selectedItems.value = Set.from(_selectedItems.value);
+                  }
+                  setState(() {});
+                },
+                onTap: () {
+                  if (_isSelectionMode.value) {
+                    if (_selectedItems.value.contains(track)) {
+                      _selectedItems.value.remove(track);
+                      if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
+                    } else {
+                      _selectedItems.value.add(track);
+                    }
+                    _selectedItems.value = Set.from(_selectedItems.value);
+                    setState(() {});
+                  } else {
+                    _handleTrackTap(track, tracks);
+                  }
                 },
               ),
-            );
-          },
-          isSelectionMode: _isSelectionMode.value,
-          isSelected: _selectedItems.value.contains(track),
-        ),
             )
                 .animate()
                 .fadeIn(duration: 200.ms, delay: (min(index, 10) * 25).ms)
