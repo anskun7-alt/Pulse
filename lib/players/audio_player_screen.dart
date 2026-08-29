@@ -9,6 +9,7 @@ import '../services/playlist_service.dart';
 import '../widgets/visualizer_widget.dart';
 import '../widgets/lyrics_view.dart';
 import '../widgets/equalizer_screen.dart';
+import '../widgets/queue_sheet.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import 'package:hive/hive.dart';
@@ -672,6 +673,20 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                             ),
                                           );
                                         },
+                                      ),
+                                      // Divider separator
+                                      Container(width: 1, height: 24, color: Colors.white.withValues(alpha: 0.15)),
+                                      // Queue button
+                                      _AnimatedTapScale(
+                                        onTap: () => QueueBottomSheet.show(context),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.queue_music_rounded, color: Colors.white70),
+                                            SizedBox(width: 8),
+                                            Text("Queue", style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                                          ],
+                                        ),
                                       ),
                                     ],
                                   ),
