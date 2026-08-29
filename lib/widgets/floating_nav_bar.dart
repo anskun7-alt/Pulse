@@ -43,15 +43,15 @@ class FloatingNavBar extends StatelessWidget {
               child: Container(
                 height: 64,
                 decoration: BoxDecoration(
-                  color: PulseColors.surfaceHigh.withValues(alpha: 0.88),
+                  color: PulseColors.surfaceHigh.withValues(alpha: PulseColors.isLight ? 0.95 : 0.88),
                   borderRadius: BorderRadius.circular(32),
                   border: Border.all(
-                    color: primary.withValues(alpha: 0.3),
+                    color: primary.withValues(alpha: PulseColors.isLight ? 0.25 : 0.3),
                     width: 1.2,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.5),
+                      color: Colors.black.withValues(alpha: PulseColors.isLight ? 0.12 : 0.5),
                       blurRadius: 24,
                       offset: const Offset(0, 8),
                     )
@@ -78,8 +78,8 @@ class FloatingNavBar extends StatelessWidget {
                           gradient: isSelected
                               ? LinearGradient(
                                   colors: [
-                                    primary.withValues(alpha: 0.25),
-                                    PulseColors.accentSecondary.withValues(alpha: 0.15),
+                                    primary.withValues(alpha: PulseColors.isLight ? 0.18 : 0.25),
+                                    PulseColors.accentSecondary.withValues(alpha: PulseColors.isLight ? 0.10 : 0.15),
                                   ],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
@@ -87,7 +87,7 @@ class FloatingNavBar extends StatelessWidget {
                               : null,
                           border: isSelected
                               ? Border.all(
-                                  color: primary.withValues(alpha: 0.4),
+                                  color: primary.withValues(alpha: PulseColors.isLight ? 0.35 : 0.4),
                                   width: 1,
                                 )
                               : null,
@@ -97,7 +97,7 @@ class FloatingNavBar extends StatelessWidget {
                           children: [
                             Icon(
                               tab['icon'] as IconData,
-                              color: isSelected ? primary : Colors.white70,
+                              color: isSelected ? primary : PulseColors.textSecondary,
                               size: 22,
                             ),
                             if (isSelected) ...[
@@ -105,7 +105,7 @@ class FloatingNavBar extends StatelessWidget {
                               Text(
                                 tab['label'] as String,
                                 style: PulseTypography.bodySmall.copyWith(
-                                  color: Colors.white,
+                                  color: PulseColors.isLight ? primary : Colors.white,
                                   fontWeight: FontWeight.bold,
                                   letterSpacing: 0.2,
                                 ),

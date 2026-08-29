@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../theme/colors.dart';
 import '../widgets/floating_nav_bar.dart';
 import '../widgets/mini_player_bar.dart';
 import 'videos_tab.dart';
@@ -87,60 +88,66 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Set system status and navigation bar styling to transparent for edge-to-edge UI
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Colors.transparent,
-      systemNavigationBarIconBrightness: Brightness.light,
-      systemNavigationBarDividerColor: Colors.transparent,
-    ));
+    return ValueListenableBuilder<String>(
+      valueListenable: PulseColors.themeNotifier,
+      builder: (context, currentTheme, _) {
+        final isLight = PulseColors.isLight;
 
-    return Scaffold(
-      extendBody: true, // Let the body flow beneath the nav bars
-      backgroundColor: const Color(0xFF080810),
-      body: WillPopScope(
-        onWillPop: () async {
-          final now = DateTime.now();
-          if (_lastBackPressTime == null || now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
-            _lastBackPressTime = now;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Press back again to exit'), duration: Duration(seconds: 2)),
-            );
-            return false;
-          }
-          return true; // exit app
-        },
-        child: Stack(
-          children: [
-            // Screen content
-            Positioned.fill(
-              child: _buildBody(),
-            ),
+        SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: isLight ? Brightness.dark : Brightness.light,
+          systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarIconBrightness: isLight ? Brightness.dark : Brightness.light,
+          systemNavigationBarDividerColor: Colors.transparent,
+        ));
 
-            // Bottom controls overlay: Mini player and Floating navigation bar
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const MiniPlayerBar(),
-                  FloatingNavBar(
-                    currentIndex: _currentIndex,
-                    onTap: (index) {
-                      setState(() {
-                        _currentIndex = index;
-                      });
-                    },
+        return Scaffold(
+          extendBody: true, // Let the body flow beneath the nav bars
+          backgroundColor: PulseColors.background,
+          body: WillPopScope(
+            onWillPop: () async {
+              final now = DateTime.now();
+              if (_lastBackPressTime == null || now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
+                _lastBackPressTime = now;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Press back again to exit'), duration: Duration(seconds: 2)),
+                );
+                return false;
+              }
+              return true; // exit app
+            },
+            child: Stack(
+              children: [
+                // Screen content
+                Positioned.fill(
+                  child: _buildBody(),
+                ),
+
+                // Bottom controls overlay: Mini player and Floating navigation bar
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const MiniPlayerBar(),
+                      FloatingNavBar(
+                        currentIndex: _currentIndex,
+                        onTap: (index) {
+                          setState(() {
+                            _currentIndex = index;
+                          });
+                        },
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

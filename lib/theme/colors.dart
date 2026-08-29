@@ -3,6 +3,8 @@ import 'package:hive/hive.dart';
 
 /// Dark theme colours (default)
 class PulseColors {
+  static final ValueNotifier<String> themeNotifier = ValueNotifier<String>(_themeMode);
+
   static String get _themeMode {
     try {
       final box = Hive.box('settings_box');
@@ -11,6 +13,18 @@ class PulseColors {
       return 'Dark';
     }
   }
+
+  static void setTheme(String mode) {
+    try {
+      final box = Hive.box('settings_box');
+      box.put('theme_mode', mode);
+      themeNotifier.value = mode;
+    } catch (_) {
+      themeNotifier.value = mode;
+    }
+  }
+
+  static bool get isLight => _themeMode == 'Light' || _themeMode == 'Creme';
 
   static Color get background {
     switch (_themeMode) {
@@ -32,7 +46,7 @@ class PulseColors {
       case 'Turkish':
         return TurkishColors.background;
       default:
-        return const Color(0xFF080810);
+        return const Color(0xFF0F121C); // Deep midnight indigo-charcoal
     }
   }
 
@@ -56,7 +70,7 @@ class PulseColors {
       case 'Turkish':
         return TurkishColors.surface;
       default:
-        return const Color(0xFF12121E);
+        return const Color(0xFF171B29);
     }
   }
 
@@ -80,7 +94,7 @@ class PulseColors {
       case 'Turkish':
         return TurkishColors.surfaceHigh;
       default:
-        return const Color(0xFF1C1C2E);
+        return const Color(0xFF22273B);
     }
   }
 
@@ -104,7 +118,7 @@ class PulseColors {
       case 'Turkish':
         return TurkishColors.accentPrimary;
       default:
-        return const Color(0xFF7C3AED);
+        return const Color(0xFF818CF8); // Vibrant Electric Indigo
     }
   }
 
@@ -128,7 +142,7 @@ class PulseColors {
       case 'Turkish':
         return TurkishColors.accentSecondary;
       default:
-        return const Color(0xFF06B6D4);
+        return const Color(0xFF38BDF8); // Electric Sky Cyan
     }
   }
 
@@ -183,7 +197,7 @@ class PulseColors {
   static Color get textPrimary {
     switch (_themeMode) {
       case 'Light':
-        return Colors.black87;
+        return LightColors.textPrimary;
       case 'Creme':
         return CremeColors.textPrimary;
       case 'RDR2':
@@ -198,14 +212,14 @@ class PulseColors {
       case 'Turkish':
         return TurkishColors.textPrimary;
       default:
-        return Colors.white;
+        return const Color(0xFFF8FAFC);
     }
   }
 
   static Color get textSecondary {
     switch (_themeMode) {
       case 'Light':
-        return Colors.black54;
+        return LightColors.textSecondary;
       case 'Creme':
         return CremeColors.textSecondary;
       case 'RDR2':
@@ -220,7 +234,7 @@ class PulseColors {
       case 'Turkish':
         return TurkishColors.textSecondary;
       default:
-        return const Color(0xFF9E9EAF);
+        return const Color(0xFF94A3B8);
     }
   }
 
@@ -233,7 +247,7 @@ class PulseColors {
       case 'Creme':
         return CremeColors.onAccentPrimary;
       default:
-        return const Color(0xFF5B3AA4);
+        return accentPrimary;
     }
   }
 
@@ -246,41 +260,16 @@ class PulseColors {
       case 'Creme':
         return CremeColors.onAccentSecondary;
       default:
-        return const Color(0xFF044E5E);
-    }
-  }
-
-  static Color get onSuccess {
-    switch (_themeMode) {
-      case 'AMOLED':
-        return AmoledColors.onSuccess;
-      case 'Light':
-        return LightColors.onSuccess;
-      case 'Creme':
-        return CremeColors.onSuccess;
-      default:
-        return const Color(0xFF0A6B24);
-    }
-  }
-
-  static Color get onDanger {
-    switch (_themeMode) {
-      case 'AMOLED':
-        return AmoledColors.onDanger;
-      case 'Light':
-        return LightColors.onDanger;
-      case 'Creme':
-        return CremeColors.onDanger;
-      default:
-        return const Color(0xFFB71C1C);
+        return accentSecondary;
     }
   }
 
   static Color get activeAccentPrimary {
     switch (_themeMode) {
       case 'Light':
+        return LightColors.onAccentPrimary;
       case 'Creme':
-        return onAccentPrimary;
+        return CremeColors.onAccentPrimary;
       default:
         return accentPrimary;
     }
@@ -289,8 +278,9 @@ class PulseColors {
   static Color get activeAccentSecondary {
     switch (_themeMode) {
       case 'Light':
+        return LightColors.onAccentSecondary;
       case 'Creme':
-        return onAccentSecondary;
+        return CremeColors.onAccentSecondary;
       default:
         return accentSecondary;
     }
@@ -305,7 +295,7 @@ class PulseColors {
   }
 
   static List<BoxShadow> glowShadow(Color color) {
-    final opacity = _themeMode == 'Creme' ? 0.15 : 0.28;
+    final opacity = isLight ? 0.12 : 0.28;
     return [
       BoxShadow(
         color: color.withValues(alpha: opacity),
@@ -317,61 +307,61 @@ class PulseColors {
   }
 }
 
-/// AMOLED (pure black) theme colours
+/// AMOLED (100% Pitch Pure Black) theme colours
 class AmoledColors {
-  static const Color background = Colors.black;
-  static const Color surface = Color(0xFF0C0C0C);
-  static const Color surfaceHigh = Color(0xFF222222);
+  static const Color background = Color(0xFF000000); // 100% Pitch Black
+  static const Color surface = Color(0xFF080808);
+  static const Color surfaceHigh = Color(0xFF141414);
 
-  static const Color accentPrimary = Color(0xFF9D5FF5);
-  static const Color accentSecondary = Color(0xFF22D3EE);
+  static const Color accentPrimary = Color(0xFFA855F7); // High-luminance Neon Violet
+  static const Color accentSecondary = Color(0xFF06B6D4); // High-contrast Neon Cyan
 
-  static const Color success = Color(0xFF4ADE80);
-  static const Color danger = Color(0xFFF87171);
+  static const Color success = Color(0xFF10B981);
+  static const Color danger = Color(0xFFF43F5E);
 
-  static const Color onAccentPrimary = Color(0xFF5B3AA4);
-  static const Color onAccentSecondary = Color(0xFF044E5E);
-  static const Color onSuccess = Color(0xFF0A6B24);
-  static const Color onDanger = Color(0xFFB71C1C);
+  static const Color textPrimary = Color(0xFFFFFFFF);
+  static const Color textSecondary = Color(0xFF71717A);
+
+  static const Color onAccentPrimary = Color(0xFFC084FC);
+  static const Color onAccentSecondary = Color(0xFF22D3EE);
 }
 
-/// Light theme colours
+/// Light theme colours (High contrast, crisp slate)
 class LightColors {
-  static const Color background = Color(0xFFF6F6FA);
-  static const Color surface = Colors.white;
-  static const Color surfaceHigh = Color(0xFFE5E5EF);
+  static const Color background = Color(0xFFF8FAFC); // Clean crisp light background
+  static const Color surface = Color(0xFFFFFFFF);
+  static const Color surfaceHigh = Color(0xFFE2E8F0);
 
-  static const Color accentPrimary = Color(0xFF7C3AED);
-  static const Color accentSecondary = Color(0xFF06B6D4);
+  static const Color accentPrimary = Color(0xFF6D28D9); // Deep Royal Violet
+  static const Color accentSecondary = Color(0xFF0284C7); // Deep Ocean Azure
 
   static const Color success = Color(0xFF16A34A);
   static const Color danger = Color(0xFFDC2626);
 
-  static const Color onAccentPrimary = Color(0xFF7C3AED);
-  static const Color onAccentSecondary = Color(0xFF06B6D4);
-  static const Color onSuccess = Color(0xFF22C55E);
-  static const Color onDanger = Color(0xFFEF4444);
+  static const Color textPrimary = Color(0xFF0F172A); // High-contrast Deep Slate
+  static const Color textSecondary = Color(0xFF475569); // Slate Gray
+
+  static const Color onAccentPrimary = Color(0xFF6D28D9);
+  static const Color onAccentSecondary = Color(0xFF0284C7);
 }
 
 /// Creme (warm, rich ivory/espresso) theme colours
 class CremeColors {
-  static const Color background = Color(0xFFFAF5EC);
-  static const Color surface = Color(0xFFFFFDF9);
-  static const Color surfaceHigh = Color(0xFFF3EAD8);
+  static const Color background = Color(0xFFFAF5EC); // Warm ivory background
+  static const Color surface = Color(0xFFFFFDF9); // Clean ivory card
+  static const Color surfaceHigh = Color(0xFFEDE4D3); // Warm cream highlight
   
-  static const Color accentPrimary = Color(0xFFB57C58);
-  static const Color accentSecondary = Color(0xFF6B8068);
+  static const Color accentPrimary = Color(0xFF92400E); // Deep roasted amber-bronze
+  static const Color accentSecondary = Color(0xFF15803D); // Deep forest emerald
   
-  static const Color textPrimary = Color(0xFF2E251B);
-  static const Color textSecondary = Color(0xFF7A6F62);
+  static const Color textPrimary = Color(0xFF1C1917); // Deep Stone Espresso (100% readable!)
+  static const Color textSecondary = Color(0xFF57534E); // Warm Stone Taupe
 
-  static const Color success = Color(0xFF2E7D32);
-  static const Color danger = Color(0xFFC62828);
+  static const Color success = Color(0xFF15803D);
+  static const Color danger = Color(0xFFB91C1C);
 
-  static const Color onAccentPrimary = Color(0xFFFFFFFF);
-  static const Color onAccentSecondary = Color(0xFFFFFFFF);
-  static const Color onSuccess = Color(0xFFFFFFFF);
-  static const Color onDanger = Color(0xFFFFFFFF);
+  static const Color onAccentPrimary = Color(0xFF78350F); // High-contrast text bronze
+  static const Color onAccentSecondary = Color(0xFF14532D); // High-contrast text emerald
 }
 
 /// 🤠 Red Dead Redemption 2 Outlaw theme

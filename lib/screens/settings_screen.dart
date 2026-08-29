@@ -187,6 +187,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     if (val != null) {
                       setState(() => _themeMode = val);
                       _saveSetting('theme_mode', val);
+                      PulseColors.setTheme(val);
                     }
                   },
                 ),
@@ -531,6 +532,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       trailing: DropdownButton<T>(
         value: value,
         dropdownColor: PulseColors.surfaceHigh,
+        iconEnabledColor: PulseColors.activeAccentPrimary,
         underline: const SizedBox.shrink(),
         style: PulseTypography.bodyLarge.copyWith(color: PulseColors.activeAccentPrimary, fontWeight: FontWeight.bold),
         items: items.map((item) {
