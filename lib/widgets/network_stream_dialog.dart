@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/media_file.dart';
 import '../services/playback_service.dart';
 import '../players/video_player_screen.dart';
+import '../players/desktop_video_player.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
@@ -22,6 +24,33 @@ class NetworkStreamDialog extends StatefulWidget {
 class _NetworkStreamDialogState extends State<NetworkStreamDialog> {
   final TextEditingController _urlController = TextEditingController();
   bool _isVideo = true;
+
+  final List<Map<String, dynamic>> _sampleStreams = [
+    {
+      'name': 'Mux HLS Test',
+      'url': 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+      'isVideo': true,
+      'icon': Icons.tv_rounded,
+    },
+    {
+      'name': 'Big Buck Bunny (MP4)',
+      'url': 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+      'isVideo': true,
+      'icon': Icons.movie_rounded,
+    },
+    {
+      'name': 'Sintel (HLS)',
+      'url': 'https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8',
+      'isVideo': true,
+      'icon': Icons.smart_display_rounded,
+    },
+    {
+      'name': 'Nightride FM (Radio)',
+      'url': 'https://stream.nightride.fm/chillsynth.mp3',
+      'isVideo': false,
+      'icon': Icons.radio_rounded,
+    },
+  ];
 
   @override
   void dispose() {
@@ -49,11 +78,19 @@ class _NetworkStreamDialogState extends State<NetworkStreamDialog> {
     Navigator.of(context).pop();
 
     if (_isVideo) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => VideoPlayerScreen(file: streamFile),
-        ),
-      );
+      if (Platform.isWindows) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => DesktopVideoPlayerScreen(file: streamFile),
+          ),
+        );
+      } else {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => VideoPlayerScreen(file: streamFile),
+          ),
+        );
+      }
     } else {
       PlaybackService.instance.playTrack(streamFile, newQueue: [streamFile]);
     }
@@ -71,62 +108,100 @@ class _NetworkStreamDialogState extends State<NetworkStreamDialog> {
           Text("Open Network Stream", style: PulseTypography.displaySmall),
         ],
       ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "Enter a network URL (HTTP, HTTPS, HLS .m3u8, or RTSP):",
-            style: PulseTypography.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _urlController,
-            autofocus: true,
-            style: PulseTypography.bodyLarge,
-            decoration: InputDecoration(
-              hintText: "https://example.com/live/stream.m3u8",
-              hintStyle: PulseTypography.bodyMedium,
-              filled: true,
-              fillColor: PulseColors.surface,
-              prefixIcon: const Icon(Icons.link_rounded, size: 20),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: PulseColors.accentPrimary, width: 1.5),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: PulseColors.isLight ? Colors.black12 : Colors.white12),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Enter a network URL (HTTP, HTTPS, HLS .m3u8, or RTSP):",
+              style: PulseTypography.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _urlController,
+              autofocus: true,
+              style: PulseTypography.bodyLarge,
+              decoration: InputDecoration(
+                hintText: "https://example.com/live/stream.m3u8",
+                hintStyle: PulseTypography.bodyMedium,
+                filled: true,
+                fillColor: PulseColors.surface,
+                prefixIcon: const Icon(Icons.link_rounded, size: 20),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: PulseColors.accentPrimary, width: 1.5),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: PulseColors.isLight ? Colors.black12 : Colors.white12),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              ChoiceChip(
-                label: const Text("Video Stream"),
-                selected: _isVideo,
-                onSelected: (val) => setState(() => _isVideo = true),
-                selectedColor: PulseColors.accentPrimary.withValues(alpha: 0.2),
-                labelStyle: TextStyle(
-                  color: _isVideo ? PulseColors.accentPrimary : PulseColors.textSecondary,
-                  fontWeight: FontWeight.bold,
-                ),
+            const SizedBox(height: 14),
+
+            // Quick Samples Header
+            Text(
+              "QUICK TEST STREAMS",
+              style: PulseTypography.monoLabel.copyWith(
+                color: PulseColors.activeAccentSecondary,
+                fontSize: 10,
+                letterSpacing: 1.0,
+                fontWeight: FontWeight.bold,
               ),
-              const SizedBox(width: 8),
-              ChoiceChip(
-                label: const Text("Audio Stream"),
-                selected: !_isVideo,
-                onSelected: (val) => setState(() => _isVideo = false),
-                selectedColor: PulseColors.accentPrimary.withValues(alpha: 0.2),
-                labelStyle: TextStyle(
-                  color: !_isVideo ? PulseColors.accentPrimary : PulseColors.textSecondary,
-                  fontWeight: FontWeight.bold,
+            ),
+            const SizedBox(height: 8),
+
+            // 1-Tap Sample Chips
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _sampleStreams.map((sample) {
+                return ActionChip(
+                  avatar: Icon(sample['icon'] as IconData, size: 16, color: PulseColors.accentPrimary),
+                  label: Text(sample['name'] as String, style: const TextStyle(fontSize: 12)),
+                  backgroundColor: PulseColors.surface,
+                  side: BorderSide(
+                    color: PulseColors.isLight ? Colors.black12 : Colors.white12,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _urlController.text = sample['url'] as String;
+                      _isVideo = sample['isVideo'] as bool;
+                    });
+                  },
+                );
+              }).toList(),
+            ),
+
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                ChoiceChip(
+                  label: const Text("Video Stream"),
+                  selected: _isVideo,
+                  onSelected: (val) => setState(() => _isVideo = true),
+                  selectedColor: PulseColors.accentPrimary.withValues(alpha: 0.2),
+                  labelStyle: TextStyle(
+                    color: _isVideo ? PulseColors.accentPrimary : PulseColors.textSecondary,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  label: const Text("Audio Stream"),
+                  selected: !_isVideo,
+                  onSelected: (val) => setState(() => _isVideo = false),
+                  selectedColor: PulseColors.accentPrimary.withValues(alpha: 0.2),
+                  labelStyle: TextStyle(
+                    color: !_isVideo ? PulseColors.accentPrimary : PulseColors.textSecondary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(

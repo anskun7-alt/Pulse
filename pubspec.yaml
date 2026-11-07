@@ -1,6 +1,6 @@
 name: pulse
 description: Your media, your way.
-version: 1.0.2+3
+version: 1.0.4+5
 publish_to: 'none'
 
 environment:
@@ -10,9 +10,14 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.6
+  path: ^1.9.0
+  uuid: ^4.5.1
 
   better_player_plus: ^1.2.1
   video_thumbnail: ^0.5.0
+  media_kit: ^1.1.10
+  media_kit_video: ^1.2.4
+  media_kit_libs_windows_video: ^1.0.8
 
   # Audio
   just_audio: ^0.9.36
@@ -26,8 +31,9 @@ dependencies:
     path: third_party/flutter_media_metadata
   audiotags: ^1.4.5
 
-  # Lyrics
+  # Lyrics & Web Extraction
   http: ^1.2.0
+  youtube_explode_dart: ^2.3.6
 
   # Local storage
   hive: ^2.2.3
@@ -40,6 +46,8 @@ dependencies:
 
   # UI & animation
   flutter_animate: ^4.5.0
+  google_fonts: ^6.2.1
+  animated_text_kit: ^4.2.2
   lottie: ^3.1.2
   palette_generator: ^0.3.3
   cached_network_image: ^3.3.0
@@ -51,6 +59,7 @@ dependencies:
   open_filex: ^4.5.0
   package_info_plus: ^9.0.0
   url_launcher: ^6.3.0
+  fc_native_video_thumbnail: ^2.2.0
 
 dev_dependencies:
   flutter_test:
@@ -75,4 +84,6 @@ flutter:
   assets:
     - assets/
     - assets/play-button.webp
+    - assets/rdr2_styled.webp
     - assets/animation/
+    - assets/avatars/

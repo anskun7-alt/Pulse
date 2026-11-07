@@ -114,22 +114,25 @@ class ContextBottomSheet extends StatelessWidget {
                       title: "Play now",
                       onTap: () {
                         Navigator.pop(context);
-                        if (file.isVideo) {
-                          // Trigger video player
-                        } else {
-                          PlaybackService.instance.playTrack(file);
-                        }
+                        PlaybackService.instance.playTrack(file);
                       },
                     ),
+                    if (file.isVideo)
+                      _buildActionTile(
+                        icon: Icons.headphones_rounded,
+                        title: "Play as background audio",
+                        onTap: () {
+                          Navigator.pop(context);
+                          PlaybackService.instance.playTrack(file, forceAudio: true);
+                        },
+                      ),
                     if (!file.isVideo)
                       _buildActionTile(
                         icon: Icons.queue_music_rounded,
                         title: "Play next in queue",
                         onTap: () {
                           Navigator.pop(context);
-                          final currentQ = List<MediaFile>.from(PlaybackService.instance.queue.value);
-                          currentQ.insert(PlaybackService.instance.queueIndex.value + 1, file);
-                          PlaybackService.instance.queue.value = currentQ;
+                          PlaybackService.instance.playTrackNext(file);
                         },
                       ),
                     _buildActionTile(

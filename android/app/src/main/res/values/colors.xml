@@ -1,3 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="white">#FFFFFFFF</color>
+    <color name="pulse_background">#0F121C</color>
+    <color name="pulse_accent">#818CF8</color>
+    <color name="notification_color">#818CF8</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
 </resources>

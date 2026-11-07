@@ -56,3 +56,7 @@ flutter_01.png
 
 # VS Code
 .vscode/
+
+# Built installers and third-party binaries (ffmpeg/yt-dlp ~100 MB each; GitHub limit is 100 MB)
+/installer/*.exe
+/tools/bin/*.exe

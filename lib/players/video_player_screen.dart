@@ -2,22 +2,27 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:better_player_plus/better_player_plus.dart';
 import 'package:hive/hive.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:open_filex/open_filex.dart';
 import '../models/media_file.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../services/playback_service.dart';
+import '../services/metadata_service.dart';
 import '../services/shortcuts_service.dart';
+import '../widgets/add_to_playlist_sheet.dart';
+import '../widgets/animated_like_button.dart';
+import '../widgets/interactive_play_button.dart';
+import 'desktop_video_player.dart';
 
 enum VideoRepeatMode { off, all, one }
 enum ScreenOrientationMode { auto, landscape, portrait }
+enum _GestureAction { none, seek, brightness, volume, zoom }
 
 class VideoPlayerScreen extends StatefulWidget {
   final MediaFile file;
@@ -39,24 +44,28 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   late BetterPlayerController _betterPlayerController;
   late Box _settingsBox;
   final GlobalKey _screenshotKey = GlobalKey();
+  late final FocusNode _focusNode;
 
   bool _isInitialized = false;
   bool _showControls = true;
   bool _isLocked = false;
+  bool _showLockIndicator = false;
+  Timer? _lockIndicatorTimer;
+  bool _showUnlockButton = false;
+  Timer? _unlockButtonTimer;
   bool _isFirstInit = true;
   bool _handedOffToBackground = false;
   Duration? _overrideInitialPosition;
   double _volume = 1.0;
 
   StreamSubscription? _bgPlayerStateSub;
-  StreamSubscription? _bgPositionSub;
 
   Future<void> _cancelLocalSubscriptions() async {
     try {
       await _bgPlayerStateSub?.cancel();
       _bgPlayerStateSub = null;
-      await _bgPositionSub?.cancel();
-      _bgPositionSub = null;
+      _lockIndicatorTimer?.cancel();
+      _unlockButtonTimer?.cancel();
     } catch (_) {}
   }
 
@@ -68,6 +77,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   String _zoomMode = 'Fit';
   double _scale = 1.0;
 
+  // Unified conflict-free gesture state
+  _GestureAction _gestureAction = _GestureAction.none;
+  Offset _gestureStartOffset = Offset.zero;
+  Duration? _gestureSeekStartPos;
+  double _gestureInitialScale = 1.0;
+  bool _isSpeedBoosting = false;
+  double _preBoostSpeed = 1.0;
+
   // Real-time smooth dragging seeker
   bool _isDraggingSlider = false;
   double _dragValue = 0.0;
@@ -78,6 +95,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   Timer? _overlayTimer;
   Timer? _controlsTimer;
   Timer? _debounceTimer;
+
+  // Video Resume state
+  bool _showResumePrompt = false;
+  Duration? _savedResumePosition;
+  Timer? _resumePromptTimer;
 
   // Subtitle and Audio Track
   List<String> _subtitleFiles = [];
@@ -114,6 +136,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   late List<MediaFile> _playlist;
   late int _currentIndex;
   bool _isShuffle = false;
+  List<int> _shuffledDeck = [];
+  int _shuffledDeckPointer = -1;
   // Default to repeat all videos for continuous playback.
   VideoRepeatMode _repeatMode = VideoRepeatMode.all;
 
@@ -123,12 +147,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   bool _isPlaying = false;
 
   // Swipe seek
-  Duration? _dragStartVideoPosition;
-  double _dragStartDx = 0.0;
   Duration? _targetSeekPosition;
 
   // Left/Right side vertical swipe overlays
-  bool _isLeftDrag = false;
   bool _showSideVolumeBar = false;
   bool _showSideBrightnessBar = false;
   Timer? _sideBarTimer;
@@ -141,17 +162,22 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
   // Helper to hand off video playback to background audio
   void _handoffToBackground() {
-    if (_isPlaying) {
-      _betterPlayerController.pause();
-      final currentFile = _playlist[_currentIndex];
-      final currentPosition = _betterPlayerController.videoPlayerController?.value.position ?? Duration.zero;
-      _handedOffToBackground = true;
-      PlaybackService.instance.playTrack(
-        currentFile,
-        newQueue: _playlist,
-        startPosition: currentPosition,
-        forceAudio: true,
-      );
+    final currentPosition = _betterPlayerController.videoPlayerController?.value.position ?? _currentPosition;
+    final currentDuration = _betterPlayerController.videoPlayerController?.value.duration ?? _totalDuration;
+    _betterPlayerController.pause();
+    var currentFile = _playlist[_currentIndex];
+    if (currentFile.duration == Duration.zero && currentDuration > Duration.zero) {
+      currentFile = currentFile.copyWith(duration: currentDuration);
+    }
+    _handedOffToBackground = true;
+    PlaybackService.instance.playTrack(
+      currentFile,
+      newQueue: _playlist,
+      startPosition: currentPosition,
+      forceAudio: true,
+    );
+    if (mounted) {
+      _showOverlayHUD('Playing in Background', 1.0);
     }
   }
 
@@ -167,6 +193,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     }
 
     WidgetsBinding.instance.addObserver(this);
+    _focusNode = FocusNode()..requestFocus();
 
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -179,6 +206,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     _initPlayer();
   }
 
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _isInitialized) {
+        _applyZoomMode();
+      }
+    });
+  }
+
   // FIX: Properly handle background/foreground transitions
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -188,18 +225,24 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
     switch (state) {
       case AppLifecycleState.inactive:
-        // When app becomes inactive, attempt PiP if video is playing
-        if (_isPlaying) {
+        // Do not force PiP on inactive; only enter PiP if auto_pip is explicitly enabled
+        final autoPip = _settingsBox.get('auto_pip', defaultValue: false) as bool;
+        if (_isPlaying && autoPip) {
           _enterPipIfPossible();
         }
         break;
       case AppLifecycleState.paused:
-        // Hand off playing video to background audio playback
+        // Hand off playing video to background audio playback when screen turns off / locked
+        final bgAudio = _settingsBox.get('background_audio', defaultValue: true) as bool;
         _wasPlayingBeforeBackground = _isPlaying;
-        if (_isPlaying) {
+        if (_isPlaying && bgAudio) {
           _betterPlayerController.pause();
-          final currentFile = _playlist[_currentIndex];
-          final currentPosition = _betterPlayerController.videoPlayerController?.value.position ?? Duration.zero;
+          var currentFile = _playlist[_currentIndex];
+          final currentPosition = _betterPlayerController.videoPlayerController?.value.position ?? _currentPosition;
+          final currentDuration = _betterPlayerController.videoPlayerController?.value.duration ?? _totalDuration;
+          if (currentFile.duration == Duration.zero && currentDuration > Duration.zero) {
+            currentFile = currentFile.copyWith(duration: currentDuration);
+          }
           
           _handedOffToBackground = true;
           PlaybackService.instance.playTrack(
@@ -208,45 +251,46 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
             startPosition: currentPosition,
             forceAudio: true,
           );
+        } else if (_isPlaying && !bgAudio) {
+          _betterPlayerController.pause();
         }
         break;
       case AppLifecycleState.resumed:
         if (_handedOffToBackground) {
           _handedOffToBackground = false;
-          Future.delayed(const Duration(milliseconds: 200), () {
+          Future.delayed(const Duration(milliseconds: 150), () async {
             if (!mounted) return;
             final playbackService = PlaybackService.instance;
             final track = playbackService.currentTrack.value;
+            final currentPosition = playbackService.position.value;
+            final isPlaying = playbackService.isPlaying.value;
+
+            // Immediately pause background audio to give audio focus back to BetterPlayer
+            try {
+              await playbackService.player.pause();
+            } catch (_) {}
+
             if (track != null) {
               final newIdx = _playlist.indexWhere((f) => f.path == track.path);
-              if (newIdx != -1) {
-                final currentPosition = playbackService.position.value;
-                final isPlaying = playbackService.isPlaying.value;
-                
-                playbackService.player.setVolume(0.0);
-                
-                if (newIdx == _currentIndex) {
-                  _betterPlayerController.seekTo(currentPosition).then((_) {
-                    if (isPlaying) {
-                      _betterPlayerController.play();
-                      playbackService.player.play();
-                    } else {
-                      _betterPlayerController.pause();
-                      playbackService.player.pause();
-                    }
-                  });
-                } else {
-                  _overrideInitialPosition = currentPosition;
-                  _playVideoAtIndex(newIdx, autoPlay: isPlaying);
-                }
+              if (newIdx != -1 && newIdx != _currentIndex) {
+                _overrideInitialPosition = currentPosition;
+                _playVideoAtIndex(newIdx, autoPlay: isPlaying);
+                return;
+              }
+            }
+
+            if (_betterPlayerController.videoPlayerController != null) {
+              await _betterPlayerController.seekTo(currentPosition);
+              if (isPlaying) {
+                await _betterPlayerController.play();
+              } else {
+                await _betterPlayerController.pause();
               }
             }
           });
         } else if (_wasPlayingBeforeBackground) {
           _wasPlayingBeforeBackground = false;
           _betterPlayerController.play();
-          PlaybackService.instance.player.setVolume(0.0);
-          PlaybackService.instance.player.play();
         }
         break;
       case AppLifecycleState.detached:
@@ -273,16 +317,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
   void _applyOrientation(double aspectRatio) {
     if (_screenOrientationMode == ScreenOrientationMode.auto) {
-      if (aspectRatio > 1.0) {
-        SystemChrome.setPreferredOrientations([
-          DeviceOrientation.landscapeLeft,
-          DeviceOrientation.landscapeRight,
-        ]);
-      } else {
-        SystemChrome.setPreferredOrientations([
-          DeviceOrientation.portraitUp,
-        ]);
-      }
+      // In auto/sensor mode, always enable all 4 orientations so device accelerometer can freely rotate
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
     } else if (_screenOrientationMode == ScreenOrientationMode.landscape) {
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
@@ -291,6 +332,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     } else {
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
       ]);
     }
   }
@@ -303,6 +345,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   }
 
   DateTime _lastStateUpdateTime = DateTime.now();
+  DateTime _lastHiveSaveTime = DateTime.now();
 
   void _onPlayerStateChanged() {
     if (!mounted) return;
@@ -314,41 +357,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     final duration = value.duration;
     final isPlaying = value.isPlaying;
 
-    // Bidirectional synchronization to background player
-    if (!_handedOffToBackground) {
-      final bgPlayer = PlaybackService.instance.player;
-      if (isPlaying != bgPlayer.playing) {
-        if (isPlaying) {
-          bgPlayer.play();
-        } else {
-          bgPlayer.pause();
-        }
-      }
-      final bgPos = bgPlayer.position;
-      if ((position - bgPos).abs().inSeconds > 2) {
-        bgPlayer.seek(position);
-      }
-    }
-
     bool shouldUpdate = false;
     final now = DateTime.now();
 
     if (isPlaying != _isPlaying || duration != _totalDuration) {
       shouldUpdate = true;
-    } else if (position != _currentPosition) {
-      // Throttle position updates to ~1 time a second to completely prevent heavy UI lag
-      if (now.difference(_lastStateUpdateTime).inMilliseconds >= 1000) {
-        shouldUpdate = true;
+    } else if (position != _currentPosition && !_isDraggingSlider) {
+      if (_showControls) {
+        // 100ms update interval gives butter-smooth seeker progress when controls are visible
+        if (now.difference(_lastStateUpdateTime).inMilliseconds >= 100) {
+          shouldUpdate = true;
+        }
+      } else {
+        // When controls are hidden, keep in-memory position fresh without burning CPU on setState
+        _currentPosition = position;
+        if (now.difference(_lastStateUpdateTime).inMilliseconds >= 1000) {
+          shouldUpdate = true;
+        }
       }
     }
 
     if (shouldUpdate) {
       _lastStateUpdateTime = now;
-      setState(() {
-        _currentPosition = position;
-        _totalDuration = duration ?? Duration.zero;
-        _isPlaying = isPlaying;
-      });
+      if (mounted) {
+        setState(() {
+          _currentPosition = position;
+          _totalDuration = duration ?? Duration.zero;
+          _isPlaying = isPlaying;
+        });
+      }
+      // Persist state to Hive only every 5 seconds to eliminate disk I/O thrashing
+      if (now.difference(_lastHiveSaveTime).inMilliseconds >= 5000) {
+        _lastHiveSaveTime = now;
+        final currentFile = _playlist[_currentIndex];
+        _settingsBox.put('video_pos_${currentFile.path}', position.inMilliseconds);
+        _settingsBox.put('last_played_path', currentFile.path);
+        _settingsBox.put('last_played_position_ms', position.inMilliseconds);
+        _settingsBox.put('last_played_duration_ms', (duration ?? Duration.zero).inMilliseconds);
+        _settingsBox.put('last_played_title', currentFile.title);
+        _settingsBox.put('last_played_artist', currentFile.artist);
+        _settingsBox.put('last_played_art', currentFile.albumArtPath ?? '');
+        _settingsBox.put('last_played_is_video', true);
+      }
     }
   }
 
@@ -380,16 +430,34 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     }
   }
 
+  void _generateShuffledDeck() {
+    _shuffledDeck = List.generate(_playlist.length, (i) => i)..shuffle();
+    final pos = _shuffledDeck.indexOf(_currentIndex);
+    if (pos != -1) {
+      _shuffledDeck.removeAt(pos);
+      _shuffledDeck.insert(0, _currentIndex);
+      _shuffledDeckPointer = 0;
+    } else {
+      _shuffledDeckPointer = -1;
+    }
+  }
+
   void _handleVideoCompleted() {
+    final currentFile = _playlist[_currentIndex];
+    _settingsBox.put('video_pos_${currentFile.path}', 0);
+    _settingsBox.put('last_played_position_ms', 0);
     if (_repeatMode == VideoRepeatMode.one) {
       _betterPlayerController.seekTo(Duration.zero);
       _betterPlayerController.play();
     } else {
-      Future.delayed(Duration.zero, () {
-        if (mounted) {
-          _playNextVideo(autoPlay: true);
-        }
-      });
+      final autoPlayFolder = _settingsBox.get('auto_play_folder', defaultValue: true) as bool;
+      if (autoPlayFolder || _repeatMode == VideoRepeatMode.all) {
+        Future.delayed(Duration.zero, () {
+          if (mounted) {
+            _playNextVideo(autoPlay: true);
+          }
+        });
+      }
     }
   }
 
@@ -415,6 +483,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
         _loopStart = null;
         _loopEnd = null;
         _isLooping = false;
+        _rotation = 0;
+        _scale = 1.0;
         _currentPosition = Duration.zero;
         _totalDuration = Duration.zero;
         _isPlaying = false;
@@ -437,8 +507,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     if (_playlist.isEmpty) return;
     int nextIndex;
     if (_isShuffle) {
-      final random = Random();
-      nextIndex = random.nextInt(_playlist.length);
+      if (_shuffledDeck.length != _playlist.length) {
+        _generateShuffledDeck();
+      }
+      _shuffledDeckPointer++;
+      if (_shuffledDeckPointer >= _shuffledDeck.length) {
+        if (_repeatMode == VideoRepeatMode.all) {
+          _generateShuffledDeck();
+          _shuffledDeckPointer = 0;
+        } else {
+          // Finished entire shuffled deck without repeating
+          if (autoPlay) return;
+          _shuffledDeckPointer = 0;
+        }
+      }
+      nextIndex = _shuffledDeck[_shuffledDeckPointer];
     } else {
       nextIndex = _currentIndex + 1;
       if (nextIndex >= _playlist.length) {
@@ -456,13 +539,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
   void _playPreviousVideo() {
     if (_playlist.isEmpty) return;
-    int prevIndex = _currentIndex - 1;
-    if (prevIndex < 0) {
-      prevIndex = _repeatMode == VideoRepeatMode.all ? _playlist.length - 1 : _playlist.length - 1;
+    int prevIndex;
+    if (_isShuffle && _shuffledDeck.isNotEmpty && _shuffledDeckPointer > 0) {
+      _shuffledDeckPointer--;
+      prevIndex = _shuffledDeck[_shuffledDeckPointer];
+    } else {
+      prevIndex = _currentIndex - 1;
+      if (prevIndex < 0) {
+        prevIndex = _repeatMode == VideoRepeatMode.all ? _playlist.length - 1 : _playlist.length - 1;
+      }
     }
     _playVideoAtIndex(prevIndex);
   }
-
   void _cycleScreenOrientation() {
     setState(() {
       if (_screenOrientationMode == ScreenOrientationMode.auto) {
@@ -478,13 +566,17 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
         _showOverlayHUD('Orientation', 2.0);
       } else {
         _screenOrientationMode = ScreenOrientationMode.auto;
-        final size = _betterPlayerController.videoPlayerController?.value.size;
-        final aspectRatio = (size != null && size.width > 0 && size.height > 0)
-            ? size.width / size.height
-            : 1.0;
-        _applyOrientation(aspectRatio);
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
         _showOverlayHUD('Orientation', 0.0);
       }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _isInitialized) _applyZoomMode();
     });
   }
 
@@ -510,18 +602,191 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     });
   }
 
-  void _cycleAudioTrack() {
+  void _togglePlayPause() {
+    if (_isLocked) return;
+    if (_isPlaying) {
+      _betterPlayerController.pause();
+      _showOverlayHUD('Paused', 0.0);
+    } else {
+      _betterPlayerController.play();
+      _showOverlayHUD('Playing', 1.0);
+    }
+  }
+
+  void _handleAudioTrackAction() {
     try {
       final tracks = _betterPlayerController.betterPlayerAsmsAudioTracks;
-      if (tracks != null && tracks.length > 1) {
-        final current = _betterPlayerController.betterPlayerAsmsAudioTrack;
-        final idx = tracks.indexOf(current);
-        final next = tracks[(idx + 1) % tracks.length];
-        _betterPlayerController.setAudioTrack(next);
-        _showOverlayHUD('Audio: ${next.label ?? next.language ?? "Track"}', 1.0);
-      } else {
-        _showOverlayHUD('1 Audio Track', 1.0);
+      if (tracks == null || tracks.isEmpty || tracks.length <= 1) {
+        _showOverlayHUD('This video has only 1 audio track', 1.0);
+        return;
       }
+      final current = _betterPlayerController.betterPlayerAsmsAudioTrack;
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) => BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: PulseColors.surface.withValues(alpha: 0.95),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              border: Border.all(color: PulseColors.accentSecondary.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.audiotrack_rounded, color: PulseColors.accentSecondary, size: 22),
+                    const SizedBox(width: 10),
+                    const Text(
+                      'Available Audio Tracks',
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ...tracks.map((t) {
+                  final isSel = t == current;
+                  final name = t.label ?? t.language ?? 'Track ${t.id ?? ""}';
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: isSel
+                          ? PulseColors.accentSecondary.withValues(alpha: 0.15)
+                          : Colors.white.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSel ? PulseColors.accentSecondary : Colors.white12,
+                      ),
+                    ),
+                    child: ListTile(
+                      dense: true,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      title: Text(
+                        name,
+                        style: TextStyle(
+                          color: isSel ? PulseColors.accentSecondary : Colors.white,
+                          fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                      trailing: isSel
+                          ? Icon(Icons.check_circle_rounded, color: PulseColors.accentSecondary, size: 20)
+                          : null,
+                      onTap: () {
+                        _betterPlayerController.setAudioTrack(t);
+                        Navigator.of(ctx).pop();
+                        _showOverlayHUD('Audio: $name', 1.0);
+                      },
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (_) {}
+  }
+
+  void _handleVideoTrackAction() {
+    try {
+      final tracks = _betterPlayerController.betterPlayerAsmsTracks;
+      if (tracks == null || tracks.isEmpty || tracks.length <= 1) {
+        _showOverlayHUD('This video has only 1 video track', 1.0);
+        return;
+      }
+      final current = _betterPlayerController.betterPlayerAsmsTrack;
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) => BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: PulseColors.surface.withValues(alpha: 0.95),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              border: Border.all(color: PulseColors.accentSecondary.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.videocam_rounded, color: PulseColors.accentSecondary, size: 22),
+                    const SizedBox(width: 10),
+                    const Text(
+                      'Available Video Tracks',
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ...tracks.map((track) {
+                  final isSel = track == current;
+                  final bitrateStr = track.bitrate != null ? ' (${(track.bitrate! / 1000).round()} kbps)' : '';
+                  final name = '${track.width ?? "?"}x${track.height ?? "?"}$bitrateStr';
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: isSel
+                          ? PulseColors.accentSecondary.withValues(alpha: 0.15)
+                          : Colors.white.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSel ? PulseColors.accentSecondary : Colors.white12,
+                      ),
+                    ),
+                    child: ListTile(
+                      dense: true,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      title: Text(
+                        name,
+                        style: TextStyle(
+                          color: isSel ? PulseColors.accentSecondary : Colors.white,
+                          fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                      trailing: isSel
+                          ? Icon(Icons.check_circle_rounded, color: PulseColors.accentSecondary, size: 20)
+                          : null,
+                      onTap: () {
+                        _betterPlayerController.setTrack(track);
+                        Navigator.of(ctx).pop();
+                        _showOverlayHUD('Video: ${track.height ?? ""}p', 1.0);
+                      },
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (_) {}
+  }
+
+  void _cycleAudioTrack() {
+    _handleAudioTrackAction();
+  }
+
+  void _cycleVideoTrack() {
+    try {
+      final tracks = _betterPlayerController.betterPlayerAsmsTracks;
+      if (tracks == null || tracks.isEmpty || tracks.length <= 1) {
+        _showOverlayHUD('Video Track: Default', 1.0);
+        return;
+      }
+      final current = _betterPlayerController.betterPlayerAsmsTrack;
+      final idx = current != null ? tracks.indexOf(current) : -1;
+      final nextIdx = (idx + 1) % tracks.length;
+      final nextTrack = tracks[nextIdx];
+      _betterPlayerController.setTrack(nextTrack);
+      _showOverlayHUD('Video: ${nextTrack.height ?? nextTrack.width ?? "Track"}p (${nextIdx + 1}/${tracks.length})', 1.0);
     } catch (_) {}
   }
 
@@ -530,7 +795,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
       final subs = _betterPlayerController.betterPlayerSubtitlesSourceList;
       if (subs != null && subs.isNotEmpty) {
         final current = _betterPlayerController.betterPlayerSubtitlesSource;
-        final idx = subs.indexOf(current);
+        final idx = current != null ? subs.indexOf(current) : -1;
         final nextIdx = idx + 1;
         if (nextIdx < subs.length) {
           _betterPlayerController.setupSubtitleSource(subs[nextIdx]);
@@ -551,36 +816,78 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     final currentFile = _playlist[_currentIndex];
 
     if (Platform.isWindows) {
-      try {
-        await OpenFilex.open(currentFile.path);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          Navigator.of(context).pop();
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => DesktopVideoPlayerScreen(
+                file: currentFile,
+                playlist: _playlist,
+              ),
+            ),
+          );
         }
-        return;
-      } catch (e) {
-        debugPrint("Error opening video on Windows: $e");
-      }
+      });
+      return;
     }
 
     await _loadExternalSubtitles();
 
     try {
+      final bgAudio = _settingsBox.get('background_audio', defaultValue: true) as bool;
       BetterPlayerConfiguration betterPlayerConfiguration = BetterPlayerConfiguration(
         autoPlay: true,
         autoDetectFullscreenDeviceOrientation: false,
-        autoDetectFullscreenAspectRatio: true,
+        autoDetectFullscreenAspectRatio: false,
+        fullScreenByDefault: false,
         // Use BoxFit.contain to avoid cropping the video sides.
         fit: BoxFit.contain,
-        handleLifecycle: true,
+        handleLifecycle: !bgAudio,
         controlsConfiguration: const BetterPlayerControlsConfiguration(
           showControls: false,
         ),
       );
 
       BetterPlayerDataSource dataSource;
-      final startAt = _overrideInitialPosition ?? (_isFirstInit ? widget.initialPosition : null);
+      final resumeMode = _settingsBox.get('video_resume_mode', defaultValue: 'ask') as String;
+      final savedMs = _settingsBox.get('video_pos_${currentFile.path}') as int? ??
+          (_settingsBox.get('last_played_path') == currentFile.path
+              ? (_settingsBox.get('last_played_position_ms') as int? ?? 0)
+              : 0);
+
+      final explicitStart = _overrideInitialPosition ?? (_isFirstInit ? widget.initialPosition : null);
       _isFirstInit = false;
       _overrideInitialPosition = null;
+
+      Duration? startAt;
+      if (explicitStart != null) {
+        startAt = explicitStart;
+      } else if (resumeMode == 'always' && savedMs > 5000) {
+        startAt = Duration(milliseconds: savedMs);
+      } else if (resumeMode == 'ask' && savedMs > 5000) {
+        startAt = Duration.zero;
+        _savedResumePosition = Duration(milliseconds: savedMs);
+        _showResumePrompt = true;
+        _resumePromptTimer?.cancel();
+        _resumePromptTimer = Timer(const Duration(seconds: 10), () {
+          if (mounted) setState(() => _showResumePrompt = false);
+        });
+      } else {
+        startAt = Duration.zero;
+      }
+
+      final notifConfig = BetterPlayerNotificationConfiguration(
+        showNotification: true,
+        title: MetadataService.instance.cleanTitle(currentFile.title),
+        author: currentFile.artist.isNotEmpty ? currentFile.artist : 'Pulse Video',
+        imageUrl: (currentFile.albumArtPath != null &&
+                currentFile.albumArtPath!.isNotEmpty &&
+                !currentFile.albumArtPath!.startsWith('http'))
+            ? currentFile.albumArtPath
+            : null,
+        notificationChannelName: 'Pulse Video Playback',
+        activityName: 'MainActivity',
+      );
 
       if (currentFile.path.startsWith('http') ||
           currentFile.path.startsWith('https') ||
@@ -589,12 +896,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
           BetterPlayerDataSourceType.network,
           currentFile.path,
           cacheConfiguration: const BetterPlayerCacheConfiguration(useCache: false),
+          notificationConfiguration: notifConfig,
         );
       } else {
         dataSource = BetterPlayerDataSource(
           BetterPlayerDataSourceType.file,
           currentFile.path,
           cacheConfiguration: const BetterPlayerCacheConfiguration(useCache: false),
+          notificationConfiguration: notifConfig,
         );
       }
       _betterPlayerController = BetterPlayerController(betterPlayerConfiguration);
@@ -619,28 +928,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
       // Cancel any existing background subscriptions before re-registering
       await _cancelLocalSubscriptions();
 
-      // Listen to background player changes
-      _bgPlayerStateSub = PlaybackService.instance.player.playerStateStream.listen((state) {
-        if (!mounted || !_isInitialized) return;
-        final bgPlaying = state.playing;
-        final videoPlaying = _betterPlayerController.videoPlayerController?.value.isPlaying ?? false;
-        if (bgPlaying != videoPlaying) {
-          if (bgPlaying) {
-            _betterPlayerController.play();
-          } else {
-            _betterPlayerController.pause();
-          }
-        }
-      });
-
-      _bgPositionSub = PlaybackService.instance.player.positionStream.listen((pos) {
-        if (!mounted || !_isInitialized || _isDraggingSlider) return;
-        final videoPos = _betterPlayerController.videoPlayerController?.value.position ?? Duration.zero;
-        if ((pos - videoPos).abs().inSeconds > 2) {
-          _betterPlayerController.seekTo(pos);
-        }
-      });
-
       _settingsBox.put('last_played', currentFile.path);
       _settingsBox.put('last_played_time', DateTime.now().millisecondsSinceEpoch);
 
@@ -648,11 +935,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     if (videoPlayerController != null) {
       videoPlayerController.addListener(_onPlayerStateChanged);
       // Seek to the provided start position if any
-      if (startAt != null) {
+      if (startAt != null && startAt > Duration.zero) {
         // Delay briefly to ensure the player is ready
         Future.microtask(() async {
           await Future.delayed(const Duration(milliseconds: 100));
-          await _betterPlayerController.seekTo(startAt);
+          if (startAt != null) {
+            await _betterPlayerController.seekTo(startAt!);
+          }
         });
       }
 
@@ -719,23 +1008,110 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
     // Unbind controller reference
-    if (PlaybackService.instance.activeVideoController == _betterPlayerController) {
+    if (_betterPlayerController != null && PlaybackService.instance.activeVideoController == _betterPlayerController) {
       PlaybackService.instance.activeVideoController = null;
       PlaybackService.instance.onVideoNext = null;
       PlaybackService.instance.onVideoPrevious = null;
     }
     _cancelLocalSubscriptions();
 
-    _betterPlayerController.removeEventsListener(_onPlayerEvent);
-    _betterPlayerController.videoPlayerController?.removeListener(_onPlayerStateChanged);
-    _betterPlayerController.dispose();
+    if (_betterPlayerController != null) {
+      try {
+        _betterPlayerController!.removeEventsListener(_onPlayerEvent);
+        _betterPlayerController!.videoPlayerController?.removeListener(_onPlayerStateChanged);
+        _betterPlayerController!.dispose();
+      } catch (_) {}
+    }
     _overlayTimer?.cancel();
     _controlsTimer?.cancel();
     _debounceTimer?.cancel();
     _sleepTimer?.cancel();
     _sideBarTimer?.cancel();
     _doubleTapGuardTimer?.cancel();
+    _resumePromptTimer?.cancel();
+    _lockIndicatorTimer?.cancel();
+    _unlockButtonTimer?.cancel();
+    _focusNode.dispose();
     super.dispose();
+  }
+
+  void _showLockedFeedback() {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _showLockIndicator = true;
+      _showUnlockButton = true;
+    });
+    _lockIndicatorTimer?.cancel();
+    _lockIndicatorTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _showLockIndicator = false);
+    });
+    _unlockButtonTimer?.cancel();
+    _unlockButtonTimer = Timer(const Duration(milliseconds: 3500), () {
+      if (mounted) setState(() => _showUnlockButton = false);
+    });
+  }
+
+  void _unlockScreen() {
+    HapticFeedback.mediumImpact();
+    _lockIndicatorTimer?.cancel();
+    _unlockButtonTimer?.cancel();
+    setState(() {
+      _isLocked = false;
+      _showLockIndicator = false;
+      _showUnlockButton = false;
+      _showControls = true;
+    });
+    _startControlsTimer();
+    _showOverlayHUD('Unlocked', 1.0);
+  }
+
+  void _lockScreen() {
+    HapticFeedback.mediumImpact();
+    _lockIndicatorTimer?.cancel();
+    _unlockButtonTimer?.cancel();
+    setState(() {
+      _isLocked = true;
+      _showControls = false;
+      _showUnlockButton = false;
+      _showLockIndicator = false;
+    });
+    _controlsTimer?.cancel();
+    _showOverlayHUD('Locked', 1.0);
+  }
+
+  void _resumeSavedPosition() {
+    if (_savedResumePosition != null) {
+      _betterPlayerController.seekTo(_savedResumePosition!);
+      _betterPlayerController.play();
+      setState(() {
+        _currentPosition = _savedResumePosition!;
+        _showResumePrompt = false;
+      });
+      _showOverlayHUD('Resumed', 1.0);
+    }
+  }
+
+  void _restartFromBeginning() {
+    _betterPlayerController.seekTo(Duration.zero);
+    _betterPlayerController.play();
+    setState(() {
+      _currentPosition = Duration.zero;
+      _showResumePrompt = false;
+    });
+    _showOverlayHUD('Restarted', 0.0);
+  }
+
+  Future<void> _seekRelative(int seconds) async {
+    final currentPosition =
+        _betterPlayerController.videoPlayerController?.value.position ?? _currentPosition;
+    final target = currentPosition + Duration(seconds: seconds);
+    final clamped = target < Duration.zero
+        ? Duration.zero
+        : (target > _totalDuration ? _totalDuration : target);
+    _showOverlayHUD('Seek', seconds.toDouble());
+    await _betterPlayerController.seekTo(clamped);
+    setState(() => _showControls = true);
+    _startControlsTimer();
   }
 
   void _startControlsTimer() {
@@ -775,13 +1151,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     final duration = (type == 'Seek')
         ? const Duration(milliseconds: 1200)
         : const Duration(milliseconds: 2000);
-    _overlayTimer = Timer(duration, () {
-      if (mounted) {
-        setState(() {
-          _overlayType = null;
-        });
-      }
-    });
+    if (type != 'SpeedBoost') {
+      _overlayTimer = Timer(duration, () {
+        if (mounted) {
+          setState(() {
+            _overlayType = null;
+          });
+        }
+      });
+    }
   }
 
   void _adjustVolume(double delta) {
@@ -790,17 +1168,35 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
       _volume = (_volume + delta).clamp(0.0, 1.5);
       PlaybackService.instance.setVolumeScale(_volume);
     });
-    _showOverlayHUD('Volume', _volume);
     _triggerSideBar(false);
   }
 
   void _adjustBrightness(double delta) {
     if (_isLocked) return;
     setState(() {
-      _brightness = (_brightness + delta).clamp(0.0, 1.0);
+      _brightness = (_brightness + delta).clamp(0.15, 1.0);
     });
-    _showOverlayHUD('Brightness', _brightness);
     _triggerSideBar(true);
+  }
+
+  void _startSpeedBoost() {
+    if (_isLocked || _isSpeedBoosting) return;
+    _isSpeedBoosting = true;
+    _preBoostSpeed = _playbackSpeed;
+    _betterPlayerController.setSpeed(2.0);
+    _showOverlayHUD('SpeedBoost', 2.0);
+    HapticFeedback.mediumImpact();
+  }
+
+  void _stopSpeedBoost() {
+    if (!_isSpeedBoosting) return;
+    _isSpeedBoosting = false;
+    _betterPlayerController.setSpeed(_preBoostSpeed);
+    _overlayTimer?.cancel();
+    if (mounted) {
+      setState(() => _overlayType = null);
+    }
+    HapticFeedback.lightImpact();
   }
 
   void _doubleTapSeek(Offset localPosition, double screenWidth) async {
@@ -814,15 +1210,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
     final currentPosition =
         _betterPlayerController.videoPlayerController?.value.position ?? Duration.zero;
+    final xRatio = localPosition.dx / screenWidth;
 
-    if (localPosition.dx > screenWidth / 2) {
+    if (xRatio < 0.35) {
+      // Left side double tap -> Rewind 10s
+      _showOverlayHUD('Seek', -10.0);
+      await _betterPlayerController.seekTo(currentPosition - const Duration(seconds: 10));
+    } else if (xRatio > 0.65) {
+      // Right side double tap -> Forward 10s
       _showOverlayHUD('Seek', 10.0);
       await _betterPlayerController.seekTo(currentPosition + const Duration(seconds: 10));
     } else {
-      _showOverlayHUD('Seek', -10.0);
-      await _betterPlayerController.seekTo(currentPosition - const Duration(seconds: 10));
+      // Center double tap -> Toggle Play / Pause
+      _togglePlayPause();
     }
-    // Ensure controls stay visible after a seek
+    // Ensure controls stay visible after gesture
     setState(() => _showControls = true);
     _startControlsTimer();
   }
@@ -835,18 +1237,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     final videoSize = videoController.value.size!;
     if (videoSize.width <= 0 || videoSize.height <= 0) return;
 
-    final originalAspect = videoSize.width / videoSize.height;
+    final isRotated90or270 = _rotation % 180 != 0;
+    final rawAspect = videoSize.width / videoSize.height;
+    if (!rawAspect.isFinite || rawAspect <= 0) return;
+
+    // When inside a 90° or 270° RotatedBox, the child layout constraints are swapped,
+    // so BetterPlayer aspect ratio must be inverted to prevent squashing/distortion.
+    final effectiveAspect = isRotated90or270 ? (1.0 / rawAspect) : rawAspect;
+    if (!effectiveAspect.isFinite || effectiveAspect <= 0) return;
 
     final mediaQuery = MediaQuery.of(context);
-    final isRotatedLandscape = _rotation % 180 != 0;
-    final screenAspect = isRotatedLandscape
-        ? mediaQuery.size.height / mediaQuery.size.width
-        : mediaQuery.size.width / mediaQuery.size.height;
+    if (mediaQuery.size.width <= 0 || mediaQuery.size.height <= 0) return;
+    final screenAspect = isRotated90or270
+        ? (mediaQuery.size.height / mediaQuery.size.width)
+        : (mediaQuery.size.width / mediaQuery.size.height);
+    if (!screenAspect.isFinite || screenAspect <= 0) return;
 
     switch (_zoomMode) {
       case 'Fit':
         _betterPlayerController.setOverriddenFit(BoxFit.contain);
-        _betterPlayerController.setOverriddenAspectRatio(originalAspect);
+        _betterPlayerController.setOverriddenAspectRatio(effectiveAspect);
         break;
       case 'Fill':
         _betterPlayerController.setOverriddenFit(BoxFit.cover);
@@ -858,11 +1268,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
         break;
       case '16:9':
         _betterPlayerController.setOverriddenFit(BoxFit.contain);
-        _betterPlayerController.setOverriddenAspectRatio(16 / 9);
+        _betterPlayerController.setOverriddenAspectRatio(isRotated90or270 ? (9 / 16) : (16 / 9));
         break;
       case '4:3':
         _betterPlayerController.setOverriddenFit(BoxFit.contain);
-        _betterPlayerController.setOverriddenAspectRatio(4 / 3);
+        _betterPlayerController.setOverriddenAspectRatio(isRotated90or270 ? (3 / 4) : (4 / 3));
         break;
       case '1:1':
         _betterPlayerController.setOverriddenFit(BoxFit.contain);
@@ -870,7 +1280,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
         break;
       default:
         _betterPlayerController.setOverriddenFit(BoxFit.contain);
-        _betterPlayerController.setOverriddenAspectRatio(originalAspect);
+        _betterPlayerController.setOverriddenAspectRatio(effectiveAspect);
     }
   }
 
@@ -946,6 +1356,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                 onTap: () {
                   Navigator.pop(context);
                   _showSubtitleSelection();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.headphones_rounded, color: Colors.white),
+                title: Text('Play in Background', style: PulseTypography.bodyLarge),
+                subtitle: Text('Continue audio playback in background & notification',
+                    style: PulseTypography.bodySmall.copyWith(color: Colors.white60)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _handoffToBackground();
                 },
               ),
               ListTile(
@@ -1118,50 +1538,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   }
 
   void _showAddToPlaylistDialog() {
-    showDialog(
+    final currentFile = _playlist[_currentIndex];
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: PulseColors.surface,
-        title: Text('Add to Playlist', style: PulseTypography.displayMedium),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.favorite_border, color: Colors.white),
-              title: Text('Favorites', style: PulseTypography.bodyLarge),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('Added to Favorites'),
-                    backgroundColor: PulseColors.success,
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.watch_later, color: Colors.white),
-              title: Text('Watch Later', style: PulseTypography.bodyLarge),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('Added to Watch Later'),
-                    backgroundColor: PulseColors.success,
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: PulseTypography.bodyLarge),
-          ),
-        ],
-      ),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => AddToPlaylistSheet(mediaFile: currentFile),
     );
   }
 
@@ -1440,8 +1822,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                           const SizedBox(width: 12),
                           Expanded(
                             child: Slider(
-                              value: _brightness,
-                              min: 0.0,
+                              value: _brightness.clamp(0.15, 1.0),
+                              min: 0.15,
                               max: 1.0,
                               activeColor: PulseColors.accentSecondary,
                               onChanged: (val) {
@@ -1745,7 +2127,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     final size = MediaQuery.of(context).size;
 
     return KeyboardListener(
-      focusNode: FocusNode()..requestFocus(),
+      focusNode: _focusNode,
       autofocus: true,
       onKeyEvent: (event) {
         if (event is! KeyDownEvent) return;
@@ -1788,14 +2170,15 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
           PulseShortcuts.handleKeyEvent(event, context);
         }
       },
-      child: WillPopScope(
-        onWillPop: () async {
+      child: PopScope(
+        canPop: !_isLocked,
+        onPopInvoked: (didPop) async {
+          if (didPop) return;
           if (_isLocked) {
-            _showOverlayHUD('Lock', 1.0);
-            return false;
+            _showLockedFeedback();
+            return;
           }
           await _exitPlayer();
-          return false;
         },
         child: Scaffold(
           backgroundColor: Colors.black,
@@ -1841,129 +2224,267 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
 
             // ── Gesture zones ──────────────────────────────────────────────────
             Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _toggleControls,
-                // FIX: Store position on down, then call seek on the actual double-tap
-                // event. This lets _toggleControls check _justDoubleTapped and bail
-                // out, preventing the HUD from being instantly destroyed.
-                onDoubleTapDown: (details) =>
-                    _lastDoubleTapPosition = details.localPosition,
-                onDoubleTap: () {
-                  if (_lastDoubleTapPosition != null) {
-                    _doubleTapSeek(_lastDoubleTapPosition!, size.width);
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerSignal: (pointerSignal) {
+                  if (pointerSignal is PointerScrollEvent) {
+                    if (_isLocked) return;
+                    if (pointerSignal.scrollDelta.dy.abs() > pointerSignal.scrollDelta.dx.abs()) {
+                      final delta = pointerSignal.scrollDelta.dy < 0 ? 0.05 : -0.05;
+                      _adjustVolume(delta);
+                    } else if (pointerSignal.scrollDelta.dx.abs() > 0) {
+                      final seekDelta = pointerSignal.scrollDelta.dx > 0 ? 5.0 : -5.0;
+                      final newPosSeconds = (_currentPosition.inSeconds + seekDelta).clamp(0.0, _totalDuration.inSeconds.toDouble());
+                      _betterPlayerController.seekTo(Duration(seconds: newPosSeconds.toInt()));
+                      _showOverlayHUD('Seek', seekDelta);
+                    }
                   }
                 },
-                onLongPressStart: (_) {
+                onPointerPanZoomUpdate: (event) {
                   if (_isLocked) return;
-                  _showSelectionMenu();
+                  if (event.pan.dy.abs() > event.pan.dx.abs() && event.pan.dy.abs() > 1.0) {
+                    final delta = event.pan.dy < 0 ? 0.05 : -0.05;
+                    _adjustVolume(delta);
+                  } else if (event.pan.dx.abs() > 1.0) {
+                    final seekDelta = event.pan.dx > 0 ? 5.0 : -5.0;
+                    final newPosSeconds = (_currentPosition.inSeconds + seekDelta).clamp(0.0, _totalDuration.inSeconds.toDouble());
+                    _betterPlayerController.seekTo(Duration(seconds: newPosSeconds.toInt()));
+                    _showOverlayHUD('Seek', seekDelta);
+                  }
                 },
-                onHorizontalDragStart: (details) {
-                  if (_isLocked) return;
-                  _isDraggingSlider = true;
-                  _dragStartVideoPosition = _currentPosition;
-                  _dragStartDx = details.localPosition.dx;
-                  _targetSeekPosition = _currentPosition;
-                },
-                onHorizontalDragUpdate: (details) {
-                  if (_isLocked || !_isDraggingSlider || _dragStartVideoPosition == null)
-                    return;
-                  final dx = details.localPosition.dx;
-                  final diffDx = dx - _dragStartDx;
-                  final maxSeekRange = _totalDuration.inSeconds > 0
-                      ? _totalDuration.inSeconds.toDouble()
-                      : 300.0;
-                  final seekDeltaSeconds =
-                      (diffDx / size.width) * min(maxSeekRange, 120.0);
-                  final targetSeconds =
-                      (_dragStartVideoPosition!.inSeconds + seekDeltaSeconds)
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    if (_isLocked) {
+                      _showLockedFeedback();
+                      return;
+                    }
+                    _toggleControls();
+                  },
+                  onDoubleTapDown: (details) =>
+                      _lastDoubleTapPosition = details.localPosition,
+                  onDoubleTap: () {
+                    if (_isLocked) {
+                      _showLockedFeedback();
+                      return;
+                    }
+                    if (_lastDoubleTapPosition != null) {
+                      _doubleTapSeek(_lastDoubleTapPosition!, size.width);
+                    }
+                  },
+                  onLongPressStart: (_) {
+                    if (_isLocked) {
+                      _showLockedFeedback();
+                      return;
+                    }
+                    _startSpeedBoost();
+                  },
+                  onLongPressEnd: (_) => _stopSpeedBoost(),
+                  onLongPressCancel: () => _stopSpeedBoost(),
+                  onScaleStart: (details) {
+                    if (_isLocked) {
+                      _showLockedFeedback();
+                      return;
+                    }
+                    _gestureStartOffset = details.localFocalPoint;
+                    _gestureAction = _GestureAction.none;
+                    _gestureInitialScale = _scale;
+                    _gestureSeekStartPos = _currentPosition;
+                  },
+                  onScaleUpdate: (details) {
+                    if (_isLocked) return;
+
+                    // 1. Multi-finger pinch to zoom
+                    if (details.pointerCount > 1) {
+                      _gestureAction = _GestureAction.zoom;
+                      final newScale = (_gestureInitialScale * details.scale).clamp(0.5, 3.0);
+                      setState(() {
+                        _scale = newScale;
+                      });
+                      _showOverlayHUD('Zoom', (_scale * 100).toInt().toDouble());
+                      return;
+                    }
+
+                    // 2. Single finger disambiguation with 14px deadzone slop
+                    if (_gestureAction == _GestureAction.none) {
+                      final dx = (details.localFocalPoint.dx - _gestureStartOffset.dx).abs();
+                      final dy = (details.localFocalPoint.dy - _gestureStartOffset.dy).abs();
+
+                      if (dx < 14.0 && dy < 14.0) return;
+
+                      if (dx > dy * 1.25) {
+                        // Dominant horizontal movement -> Timeline Seek
+                        _gestureAction = _GestureAction.seek;
+                        _isDraggingSlider = true;
+                      } else if (dy > dx * 1.25) {
+                        // Dominant vertical movement -> Left: Brightness, Right: Volume
+                        final isLeft = _gestureStartOffset.dx < size.width / 2;
+                        _gestureAction = isLeft ? _GestureAction.brightness : _GestureAction.volume;
+                        _triggerSideBar(isLeft);
+                      }
+                    }
+
+                    // 3. Execute active gesture smoothly
+                    if (_gestureAction == _GestureAction.seek && _gestureSeekStartPos != null) {
+                      final diffDx = details.localFocalPoint.dx - _gestureStartOffset.dx;
+                      final maxSeekRange = _totalDuration.inSeconds > 0
+                          ? _totalDuration.inSeconds.toDouble()
+                          : 300.0;
+                      final seekDeltaSeconds =
+                          (diffDx / size.width) * min(maxSeekRange, 120.0);
+                      final targetSeconds = (_gestureSeekStartPos!.inSeconds + seekDeltaSeconds)
                           .clamp(0.0, _totalDuration.inSeconds.toDouble());
-                  setState(() {
-                    _targetSeekPosition =
-                        Duration(seconds: targetSeconds.toInt());
-                  });
-                  _showOverlayHUD(
-                      'Seek', targetSeconds - _dragStartVideoPosition!.inSeconds);
-                },
-                onHorizontalDragEnd: (_) async {
-                  if (_isDraggingSlider && _targetSeekPosition != null) {
-                    await _betterPlayerController.seekTo(_targetSeekPosition!);
-                  }
-                  _isDraggingSlider = false;
-                  _dragStartVideoPosition = null;
-                  _targetSeekPosition = null;
-                  // Clear the seek HUD immediately on drag end
-                  _overlayTimer?.cancel();
-                  setState(() => _overlayType = null);
-                  // Show controls so user can see current position
-                  setState(() => _showControls = true);
-                  _startControlsTimer();
-                },
-                onVerticalDragStart: (details) {
-                  if (_isLocked) return;
-                  _isLeftDrag = details.localPosition.dx < size.width / 2;
-                  _triggerSideBar(_isLeftDrag);
-                },
-                onVerticalDragUpdate: (details) {
-                  if (_isLocked) return;
-                  final delta = -details.primaryDelta! / size.height;
-                  _debounceTimer?.cancel();
-                  _debounceTimer = Timer(const Duration(milliseconds: 8), () {
-                    if (_isLeftDrag) {
+                      setState(() {
+                        _targetSeekPosition =
+                            Duration(seconds: targetSeconds.toInt());
+                      });
+                      _showOverlayHUD(
+                          'Seek', targetSeconds - _gestureSeekStartPos!.inSeconds);
+                    } else if (_gestureAction == _GestureAction.brightness) {
+                      final delta = -details.focalPointDelta.dy / (size.height * 0.75);
                       _adjustBrightness(delta);
-                    } else {
+                    } else if (_gestureAction == _GestureAction.volume) {
+                      final delta = -details.focalPointDelta.dy / (size.height * 0.75);
                       _adjustVolume(delta);
                     }
-                  });
-                },
-                child: const SizedBox.expand(),
-              ),
+                  },
+                  onScaleEnd: (details) async {
+                    if (_gestureAction == _GestureAction.seek && _targetSeekPosition != null) {
+                      await _betterPlayerController.seekTo(_targetSeekPosition!);
+                      _isDraggingSlider = false;
+                      _targetSeekPosition = null;
+                      _overlayTimer?.cancel();
+                      setState(() {
+                        _overlayType = null;
+                        _showControls = true;
+                      });
+                      _startControlsTimer();
+                    } else if (_gestureAction == _GestureAction.zoom) {
+                      _overlayTimer?.cancel();
+                      _overlayTimer = Timer(const Duration(milliseconds: 1000), () {
+                        if (mounted) setState(() => _overlayType = null);
+                      });
+                    }
+                    _gestureAction = _GestureAction.none;
+                  },
+                  child: const SizedBox.expand(),
+                ),
             ),
+          ),
 
-            // ── Side brightness bar ────────────────────────────────────────────
+            // ── Side brightness bar (Rendered on LEFT side when swiping on LEFT side) ──
             if (_showSideBrightnessBar)
               Positioned(
-                left: 12,
-                top: size.height * 0.25,
-                bottom: size.height * 0.25,
-                width: 6,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: Container(
-                    color: Colors.white24,
-                    child: Stack(
-                      alignment: Alignment.bottomCenter,
-                      children: [
-                        Container(
-                          height: (size.height * 0.5) * _brightness,
-                          color: PulseColors.accentSecondary,
+                left: 20,
+                top: (size.height - 140) / 2,
+                child: Container(
+                  width: 36,
+                  height: 140,
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: PulseColors.accentSecondary.withValues(alpha: 0.5), width: 1.2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        blurRadius: 12,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(Icons.brightness_medium_rounded, color: PulseColors.accentSecondary, size: 16),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${(_brightness * 100).toInt()}%',
+                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: Container(
+                            width: 5,
+                            color: Colors.white24,
+                            alignment: Alignment.bottomCenter,
+                            child: FractionallySizedBox(
+                              heightFactor: _brightness.clamp(0.0, 1.0),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: PulseColors.accentGradient,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
 
-            // ── Side volume bar ────────────────────────────────────────────────
+            // ── Side volume bar (Rendered on RIGHT side when swiping on RIGHT side) ──
             if (_showSideVolumeBar)
               Positioned(
-                right: 12,
-                top: size.height * 0.25,
-                bottom: size.height * 0.25,
-                width: 6,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: Container(
-                    color: Colors.white24,
-                    child: Stack(
-                      alignment: Alignment.bottomCenter,
-                      children: [
-                        Container(
-                          height: (size.height * 0.5) * (_volume / 1.5),
-                          color: _volume > 1.0 ? Colors.orangeAccent : PulseColors.accentSecondary,
-                        ),
-                      ],
+                right: 20,
+                top: (size.height - 140) / 2,
+                child: Container(
+                  width: 36,
+                  height: 140,
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: (_volume > 1.0 ? Colors.orangeAccent : PulseColors.accentSecondary).withValues(alpha: 0.5),
+                      width: 1.2,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        blurRadius: 12,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        _volume <= 0 ? Icons.volume_off_rounded : (_volume > 1.0 ? Icons.volume_up_rounded : Icons.volume_down_rounded),
+                        color: _volume > 1.0 ? Colors.orangeAccent : PulseColors.accentSecondary,
+                        size: 16,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${(_volume * 100).toInt()}%',
+                        style: TextStyle(
+                          color: _volume > 1.0 ? Colors.orangeAccent : Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: Container(
+                            width: 5,
+                            color: Colors.white24,
+                            alignment: Alignment.bottomCenter,
+                            child: FractionallySizedBox(
+                              heightFactor: (_volume / 1.5).clamp(0.0, 1.0),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: _volume > 1.0 ? Colors.orangeAccent : PulseColors.accentSecondary,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -2002,15 +2523,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                                     ? Icons.volume_up_rounded
                                     : _overlayType == 'Brightness'
                                         ? Icons.brightness_6_rounded
-                                        : _overlayType == 'Orientation'
-                                            ? Icons.screen_rotation_rounded
-                                            : _overlayType == 'Shuffle'
-                                                ? Icons.shuffle_rounded
-                                                : _overlayType == 'Repeat'
-                                                    ? Icons.repeat_rounded
-                                                    : _overlayValue > 0
-                                                        ? Icons.fast_forward_rounded
-                                                        : Icons.fast_rewind_rounded,
+                                        : _overlayType == 'SpeedBoost'
+                                            ? Icons.speed_rounded
+                                            : _overlayType == 'Zoom'
+                                                ? Icons.zoom_in_rounded
+                                                : _overlayType == 'Orientation'
+                                                    ? Icons.screen_rotation_rounded
+                                                    : _overlayType == 'Shuffle'
+                                                        ? Icons.shuffle_rounded
+                                                        : _overlayType == 'Repeat'
+                                                            ? Icons.repeat_rounded
+                                                            : _overlayValue > 0
+                                                                ? Icons.fast_forward_rounded
+                                                                : Icons.fast_rewind_rounded,
                                 color: _overlayType == 'Volume' && _overlayValue > 1.0 ? Colors.orangeAccent : Colors.white,
                                 size: 32,
                               ),
@@ -2020,17 +2545,21 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                                     ? '${(_overlayValue * 100).round()}%'
                                     : _overlayType == 'Brightness'
                                         ? '${(_overlayValue * 100).round()}%'
-                                        : _overlayType == 'Orientation'
-                                            ? (_overlayValue == 1.0
-                                                ? 'Landscape Lock'
-                                                : _overlayValue == 2.0
-                                                    ? 'Portrait Lock'
-                                                    : 'Auto Rotate')
-                                            : _overlayType == 'Shuffle'
-                                                ? (_overlayValue == 1.0
-                                                    ? 'Shuffle On'
-                                                    : 'Shuffle Off')
-                                                : _overlayType == 'Repeat'
+                                        : _overlayType == 'SpeedBoost'
+                                            ? '2.0X Fast Forward'
+                                            : _overlayType == 'Zoom'
+                                                ? '${_overlayValue.toInt()}%'
+                                                : _overlayType == 'Orientation'
+                                                    ? (_overlayValue == 1.0
+                                                        ? 'Landscape Lock'
+                                                        : _overlayValue == 2.0
+                                                            ? 'Portrait Lock'
+                                                            : 'Auto Rotate')
+                                                    : _overlayType == 'Shuffle'
+                                                        ? (_overlayValue == 1.0
+                                                            ? 'Shuffle On'
+                                                            : 'Shuffle Off')
+                                                        : _overlayType == 'Repeat'
                                                     ? (_overlayValue == 1.0
                                                         ? 'Repeat All'
                                                         : _overlayValue == 2.0
@@ -2146,7 +2675,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                           ),
                           Expanded(
                             child: Text(
-                              _playlist[_currentIndex].title,
+                              MetadataService.instance.cleanTitle(_playlist[_currentIndex].title),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -2214,75 +2743,96 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                 right: 12,
                 child: Row(
                   children: [
-                    // Subtitle on/off
-                    _VideoPillButton(
-                      icon: _currentSubtitleIndex >= 0
-                          ? Icons.subtitles_rounded
-                          : Icons.subtitles_off_rounded,
-                      active: _currentSubtitleIndex >= 0,
-                      onTap: _showSubtitleSelection,
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Subtitle on/off
+                            _VideoPillButton(
+                              icon: _currentSubtitleIndex >= 0
+                                  ? Icons.subtitles_rounded
+                                  : Icons.subtitles_off_rounded,
+                              active: _currentSubtitleIndex >= 0,
+                              onTap: _showSubtitleSelection,
+                            ),
+                            const SizedBox(width: 8),
+                            // Shuffle
+                            _VideoPillButton(
+                              icon: Icons.shuffle_rounded,
+                              active: _isShuffle,
+                              onTap: () => setState(() {
+                                _isShuffle = !_isShuffle;
+                                _showOverlayHUD('Shuffle', _isShuffle ? 1.0 : 0.0);
+                              }),
+                            ),
+                            const SizedBox(width: 8),
+                            // Repeat
+                            _VideoPillButton(
+                              icon: _repeatMode == VideoRepeatMode.one
+                                  ? Icons.repeat_one_rounded
+                                  : Icons.repeat_rounded,
+                              active: _repeatMode != VideoRepeatMode.off,
+                              onTap: () => setState(() {
+                                if (_repeatMode == VideoRepeatMode.off) {
+                                  _repeatMode = VideoRepeatMode.all;
+                                  _showOverlayHUD('Repeat', 1.0);
+                                } else if (_repeatMode == VideoRepeatMode.all) {
+                                  _repeatMode = VideoRepeatMode.one;
+                                  _showOverlayHUD('Repeat', 2.0);
+                                } else {
+                                  _repeatMode = VideoRepeatMode.off;
+                                  _showOverlayHUD('Repeat', 0.0);
+                                }
+                              }),
+                            ),
+                            const SizedBox(width: 8),
+                            // Orientation cycle
+                            _VideoPillButton(
+                              icon: _screenOrientationMode == ScreenOrientationMode.auto
+                                  ? Icons.screen_rotation_rounded
+                                  : _screenOrientationMode == ScreenOrientationMode.landscape
+                                      ? Icons.screen_lock_landscape_rounded
+                                      : Icons.screen_lock_portrait_rounded,
+                              active: _screenOrientationMode != ScreenOrientationMode.auto,
+                              onTap: _cycleScreenOrientation,
+                            ),
+                            const SizedBox(width: 8),
+                            // Screenshot
+                            _VideoPillButton(
+                              icon: Icons.camera_alt_rounded,
+                              onTap: _takeScreenshot,
+                            ),
+                            const SizedBox(width: 8),
+                            // Play in background
+                            _VideoPillButton(
+                              icon: Icons.headphones_rounded,
+                              active: _handedOffToBackground,
+                              onTap: _handoffToBackground,
+                            ),
+                            const SizedBox(width: 8),
+                            // Settings / more
+                            _VideoPillButton(
+                              icon: Icons.settings_rounded,
+                              onTap: () => _showSettingsBottomSheet(context),
+                            ),
+                            const SizedBox(width: 8),
+                            // Like / Favorite button
+                            AnimatedLikeButton(
+                              track: _playlist[_currentIndex],
+                              size: 20,
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    // Shuffle
-                    _VideoPillButton(
-                      icon: Icons.shuffle_rounded,
-                      active: _isShuffle,
-                      onTap: () => setState(() {
-                        _isShuffle = !_isShuffle;
-                        _showOverlayHUD('Shuffle', _isShuffle ? 1.0 : 0.0);
-                      }),
-                    ),
-                    const SizedBox(width: 8),
-                    // Repeat
-                    _VideoPillButton(
-                      icon: _repeatMode == VideoRepeatMode.one
-                          ? Icons.repeat_one_rounded
-                          : Icons.repeat_rounded,
-                      active: _repeatMode != VideoRepeatMode.off,
-                      onTap: () => setState(() {
-                        if (_repeatMode == VideoRepeatMode.off) {
-                          _repeatMode = VideoRepeatMode.all;
-                          _showOverlayHUD('Repeat', 1.0);
-                        } else if (_repeatMode == VideoRepeatMode.all) {
-                          _repeatMode = VideoRepeatMode.one;
-                          _showOverlayHUD('Repeat', 2.0);
-                        } else {
-                          _repeatMode = VideoRepeatMode.off;
-                          _showOverlayHUD('Repeat', 0.0);
-                        }
-                      }),
-                    ),
-                    const SizedBox(width: 8),
-                    // Orientation cycle
-                    _VideoPillButton(
-                      icon: _screenOrientationMode == ScreenOrientationMode.auto
-                          ? Icons.screen_rotation_rounded
-                          : _screenOrientationMode == ScreenOrientationMode.landscape
-                              ? Icons.screen_lock_landscape_rounded
-                              : Icons.screen_lock_portrait_rounded,
-                      active: _screenOrientationMode != ScreenOrientationMode.auto,
-                      onTap: _cycleScreenOrientation,
-                    ),
-                    const SizedBox(width: 8),
-                    // Screenshot
-                    _VideoPillButton(
-                      icon: Icons.camera_alt_rounded,
-                      onTap: _takeScreenshot,
-                    ),
-                    const SizedBox(width: 8),
-                    // Settings / more
-                    _VideoPillButton(
-                      icon: Icons.settings_rounded,
-                      onTap: () => _showSettingsBottomSheet(context),
-                    ),
-                    const Spacer(),
                     // Lock button — always at the far right of the pill row
                     GestureDetector(
-                      onTap: () => setState(() {
-                        _isLocked = true;
-                        _showControls = false;
-                        _controlsTimer?.cancel();
-                      }),
+                      onTap: _lockScreen,
                       child: Container(
                         width: 40,
                         height: 40,
@@ -2320,12 +2870,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // Progress bar row
+                          // Progress bar row with smooth millisecond seeking
                           Row(
                             children: [
                               Text(
                                 _isDraggingSlider
-                                    ? _formatDuration(Duration(seconds: _dragValue.toInt()))
+                                    ? _formatDuration(Duration(milliseconds: _dragValue.toInt()))
                                     : _formatDuration(_currentPosition),
                                 style: const TextStyle(
                                   color: Colors.white,
@@ -2334,31 +2884,56 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                                 ),
                               ),
                               Expanded(
-                                child: SliderTheme(
-                                  data: SliderTheme.of(context).copyWith(
-                                    trackHeight: 3.0,
-                                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                                    activeTrackColor: const Color(0xFF00E5FF),
-                                    inactiveTrackColor: Colors.white24,
-                                    thumbColor: Colors.white,
-                                    overlayColor: const Color(0xFF00E5FF).withValues(alpha: 0.2),
-                                  ),
-                                  child: Slider(
-                                    value: _isDraggingSlider
-                                        ? _dragValue.clamp(0.0, max(1.0, _totalDuration.inSeconds.toDouble()))
-                                        : _currentPosition.inSeconds.toDouble().clamp(0.0, max(1.0, _totalDuration.inSeconds.toDouble())),
-                                    min: 0.0,
-                                    max: max(1.0, _totalDuration.inSeconds.toDouble()),
-                                    onChangeStart: (val) => setState(() {
-                                      _isDraggingSlider = true;
-                                      _dragValue = val;
-                                    }),
-                                    onChanged: (val) => setState(() => _dragValue = val),
-                                    onChangeEnd: (val) async {
-                                      await _betterPlayerController.seekTo(Duration(seconds: val.toInt()));
-                                      setState(() => _isDraggingSlider = false);
-                                    },
+                                child: Listener(
+                                  // VLC-style seek bar mouse wheel & trackpad scroll
+                                  onPointerSignal: (pointerSignal) {
+                                    if (pointerSignal is PointerScrollEvent) {
+                                      final forward = pointerSignal.scrollDelta.dy < 0 || pointerSignal.scrollDelta.dx > 0;
+                                      final seekDelta = forward ? 5.0 : -5.0;
+                                      final newPosSeconds = (_currentPosition.inSeconds + seekDelta).clamp(0.0, _totalDuration.inSeconds.toDouble());
+                                      _betterPlayerController.seekTo(Duration(seconds: newPosSeconds.toInt()));
+                                      _showOverlayHUD('Seek', seekDelta);
+                                    }
+                                  },
+                                  onPointerPanZoomUpdate: (event) {
+                                    if (event.pan.dy.abs() > 1.0 || event.pan.dx.abs() > 1.0) {
+                                      final forward = event.pan.dy < 0 || event.pan.dx > 0;
+                                      final seekDelta = forward ? 5.0 : -5.0;
+                                      final newPosSeconds = (_currentPosition.inSeconds + seekDelta).clamp(0.0, _totalDuration.inSeconds.toDouble());
+                                      _betterPlayerController.seekTo(Duration(seconds: newPosSeconds.toInt()));
+                                      _showOverlayHUD('Seek', seekDelta);
+                                    }
+                                  },
+                                  child: SliderTheme(
+                                    data: SliderTheme.of(context).copyWith(
+                                      trackHeight: 3.5,
+                                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                                      activeTrackColor: const Color(0xFF00E5FF),
+                                      inactiveTrackColor: Colors.white24,
+                                      thumbColor: Colors.white,
+                                      overlayColor: const Color(0xFF00E5FF).withValues(alpha: 0.2),
+                                    ),
+                                    child: Slider(
+                                      value: _isDraggingSlider
+                                          ? _dragValue.clamp(0.0, max(1.0, _totalDuration.inMilliseconds.toDouble()))
+                                          : _currentPosition.inMilliseconds.toDouble().clamp(0.0, max(1.0, _totalDuration.inMilliseconds.toDouble())),
+                                      min: 0.0,
+                                      max: max(1.0, _totalDuration.inMilliseconds.toDouble()),
+                                      onChangeStart: (val) => setState(() {
+                                        _isDraggingSlider = true;
+                                        _dragValue = val;
+                                      }),
+                                      onChanged: (val) => setState(() => _dragValue = val),
+                                      onChangeEnd: (val) async {
+                                        final target = Duration(milliseconds: val.toInt());
+                                        await _betterPlayerController.seekTo(target);
+                                        setState(() {
+                                          _currentPosition = target;
+                                          _isDraggingSlider = false;
+                                        });
+                                      },
+                                    ),
                                   ),
                                 ),
                               ),
@@ -2386,11 +2961,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton(
-                                    icon: const Icon(Icons.skip_previous_rounded, color: Colors.white, size: 28),
+                                    icon: const Icon(Icons.skip_previous_rounded, color: Colors.white, size: 26),
                                     onPressed: _playPreviousVideo,
                                   ),
-                                  const SizedBox(width: 8),
-                                  GestureDetector(
+                                  const SizedBox(width: 4),
+                                  IconButton(
+                                    icon: const Icon(Icons.replay_10_rounded, color: Colors.white, size: 24),
+                                    tooltip: "-10s",
+                                    onPressed: () => _seekRelative(-10),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  PulseInteractivePlayButton(
+                                    isPlaying: _isPlaying,
                                     onTap: () async {
                                       if (_isPlaying) {
                                         await _betterPlayerController.pause();
@@ -2398,29 +2980,20 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                                         await _betterPlayerController.play();
                                       }
                                     },
-                                    child: Container(
-                                      width: 48,
-                                      height: 48,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: const Color(0xFF00E5FF),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: const Color(0xFF00E5FF).withValues(alpha: 0.4),
-                                            blurRadius: 12,
-                                          ),
-                                        ],
-                                      ),
-                                      child: Icon(
-                                        _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                                        color: Colors.black,
-                                        size: 28,
-                                      ),
-                                    ),
+                                    size: 48,
+                                    color: const Color(0xFF00E5FF),
+                                    iconColor: Colors.black,
+                                    glowColor: const Color(0xFF00E5FF),
                                   ),
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 6),
                                   IconButton(
-                                    icon: const Icon(Icons.skip_next_rounded, color: Colors.white, size: 28),
+                                    icon: const Icon(Icons.forward_10_rounded, color: Colors.white, size: 24),
+                                    tooltip: "+10s",
+                                    onPressed: () => _seekRelative(10),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  IconButton(
+                                    icon: const Icon(Icons.skip_next_rounded, color: Colors.white, size: 26),
                                     onPressed: () => _playNextVideo(),
                                   ),
                                 ],
@@ -2440,24 +3013,182 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
               ),
             ],
 
-            // ── Locked state: centred unlock button only ───────────────────────
-            if (_isLocked)
-              Center(
-                child: GestureDetector(
-                  onTap: () => setState(() {
-                    _isLocked = false;
-                    _showControls = true;
-                    _startControlsTimer();
-                  }),
-                  child: Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.65),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.redAccent, width: 1.5),
+            // ── Floating Resume Prompt Banner ──────────────────────────────
+            if (_showResumePrompt && _savedResumePosition != null && !_isLocked)
+              Positioned(
+                bottom: _showControls ? 100 : 28,
+                left: 20,
+                right: 20,
+                child: SafeArea(
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: PulseColors.surfaceHigh.withValues(alpha: 0.95),
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(color: PulseColors.accentSecondary.withValues(alpha: 0.6), width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.6),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.history_rounded, color: PulseColors.accentSecondary, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            "Resume from ${_formatDuration(_savedResumePosition!)}?",
+                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 12),
+                          GestureDetector(
+                            onTap: _resumeSavedPosition,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                              decoration: BoxDecoration(
+                                gradient: PulseColors.accentGradient,
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: const Text(
+                                "Resume",
+                                style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: _restartFromBeginning,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white12,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: Colors.white24, width: 1),
+                              ),
+                              child: const Text(
+                                "Start Over",
+                                style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => setState(() => _showResumePrompt = false),
+                            child: const Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(Icons.close_rounded, color: Colors.white60, size: 18),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    child: const Icon(Icons.lock_rounded, color: Colors.redAccent, size: 24),
+                  ),
+                ),
+              ),
+
+            // ── Locked state: Center glowing lock indicator ──────────────────────
+            if (_isLocked && _showLockIndicator)
+              Center(
+                child: IgnorePointer(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF141424).withValues(alpha: 0.85),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(
+                            color: const Color(0xFFFF2E63).withValues(alpha: 0.6),
+                            width: 1.5,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFFF2E63).withValues(alpha: 0.3),
+                              blurRadius: 20,
+                            ),
+                          ],
+                        ),
+                        child: const Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.lock_rounded, color: Color(0xFFFF2E63), size: 36),
+                            SizedBox(height: 8),
+                            Text(
+                              "Screen Locked",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              "Tap Unlock to restore controls",
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+            // ── Locked state: top-right corner floating unlock button ──────────────
+            if (_isLocked && _showUnlockButton)
+              Positioned(
+                top: 24,
+                right: 24,
+                child: SafeArea(
+                  child: GestureDetector(
+                    onTap: _unlockScreen,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(30),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF141424).withValues(alpha: 0.88),
+                            borderRadius: BorderRadius.circular(30),
+                            border: Border.all(color: const Color(0xFFFF2E63).withValues(alpha: 0.8), width: 1.5),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFFF2E63).withValues(alpha: 0.35),
+                                blurRadius: 14,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.lock_open_rounded, color: Color(0xFFFF2E63), size: 18),
+                              SizedBox(width: 8),
+                              Text(
+                                "Unlock",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),

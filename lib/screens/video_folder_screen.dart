@@ -1,13 +1,12 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
 import '../models/media_file.dart';
 import '../widgets/media_card.dart';
-import '../widgets/context_bottom_sheet.dart';
-import '../players/video_player_screen.dart';
-import '../services/playlist_service.dart';
+import '../services/playback_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../widgets/action_toolbar.dart';
+import '../widgets/add_to_playlist_sheet.dart';
 import '../providers/selection_provider.dart';
 
 class VideoFolderScreen extends StatefulWidget {
@@ -29,6 +28,15 @@ class VideoFolderScreen extends StatefulWidget {
 class _VideoFolderScreenState extends State<VideoFolderScreen> {
   bool _isGrid = false;
   String _sortBy = 'Name'; // 'Name' | 'Date' | 'Duration' | 'Size'
+  bool _autoPlayFolder = true;
+
+  @override
+  void initState() {
+    super.initState();
+    try {
+      _autoPlayFolder = Hive.box('settings_box').get('auto_play_folder', defaultValue: true) as bool;
+    } catch (_) {}
+  }
 
   // Helper to sort videos based on the selected criterion.
   List<MediaFile> _sortVideos(List<MediaFile> files) {
@@ -52,70 +60,28 @@ class _VideoFolderScreenState extends State<VideoFolderScreen> {
 
   // Show dialog to add selected items to a playlist.
   Future<void> _showAddToPlaylistDialog() async {
-    final playlists = PlaylistService.instance.playlists.value;
-    String? chosenId;
-    await showDialog(
+    final selectedFiles = widget.videos
+        .where((f) => widget.selectionProvider.isSelected(f.path))
+        .toList();
+    if (selectedFiles.isEmpty) return;
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Add to Playlist'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ...playlists.map((p) => RadioListTile<String>(
-                    title: Text(p.name),
-                    value: p.id,
-                    groupValue: chosenId,
-                    onChanged: (v) => setState(() => chosenId = v),
-                  )),
-              ListTile(
-                leading: const Icon(Icons.add),
-                title: const Text('Create New Playlist'),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  final nameController = TextEditingController();
-                  final newName = await showDialog<String>(
-                    context: context,
-                    builder: (c) => AlertDialog(
-                      title: const Text('New Playlist'),
-                      content: TextField(
-                        controller: nameController,
-                        decoration: const InputDecoration(hintText: 'Playlist name'),
-                      ),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('Cancel')),
-                        ElevatedButton(
-                          onPressed: () => Navigator.of(c).pop(nameController.text.trim()),
-                          child: const Text('Create'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (newName != null && newName.isNotEmpty) {
-                    final newPl = await PlaylistService.instance.createPlaylist(newName);
-                    chosenId = newPl.id;
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: () async {
-                if (chosenId != null) {
-                  for (var path in widget.selectionProvider.selectedIds) {
-                    await PlaylistService.instance.addToPlaylist(chosenId!, path);
-                  }
-                  widget.selectionProvider.clear();
-                }
-                Navigator.of(context).pop();
-              },
-              child: const Text('Add'),
-            ),
-          ],
-        );
-      },
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => AddToPlaylistSheet.multiple(
+        mediaFiles: selectedFiles,
+        onAdded: (playlistId) {
+          widget.selectionProvider.clear();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                  '${selectedFiles.length} video${selectedFiles.length == 1 ? '' : 's'} added to playlist'),
+              backgroundColor: PulseColors.success,
+            ));
+          }
+        },
+      ),
     );
   }
 
@@ -142,6 +108,22 @@ class _VideoFolderScreenState extends State<VideoFolderScreen> {
           ),
           title: Text(widget.folderName, style: PulseTypography.displaySmall),
           actions: [
+            IconButton(
+              icon: Icon(
+                _autoPlayFolder ? Icons.playlist_play_rounded : Icons.playlist_remove_rounded,
+                color: _autoPlayFolder ? PulseColors.accentPrimary : Colors.white60,
+              ),
+              tooltip: _autoPlayFolder ? 'Folder Auto-Play: ON' : 'Folder Auto-Play: OFF',
+              onPressed: () {
+                setState(() => _autoPlayFolder = !_autoPlayFolder);
+                Hive.box('settings_box').put('auto_play_folder', _autoPlayFolder);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(_autoPlayFolder ? 'Auto-play next video in folder enabled' : 'Auto-play next video in folder disabled'),
+                  duration: const Duration(seconds: 2),
+                  backgroundColor: PulseColors.surfaceHigh,
+                ));
+              },
+            ),
             if (isSelectionMode)
               IconButton(
                 icon: const Icon(Icons.select_all_rounded, color: Colors.white),
@@ -206,7 +188,7 @@ class _VideoFolderScreenState extends State<VideoFolderScreen> {
                             if (isSelectionMode) {
                               widget.selectionProvider.toggle(video.path);
                             } else {
-                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => VideoPlayerScreen(file: video, playlist: sortedVideos)));
+                              PlaybackService.instance.navigateToVideo(sortedVideos, video);
                             }
                           },
                           onLongPress: () => widget.selectionProvider.toggle(video.path),
@@ -228,7 +210,7 @@ class _VideoFolderScreenState extends State<VideoFolderScreen> {
                             if (isSelectionMode) {
                               widget.selectionProvider.toggle(video.path);
                             } else {
-                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => VideoPlayerScreen(file: video, playlist: sortedVideos)));
+                              PlaybackService.instance.navigateToVideo(sortedVideos, video);
                             }
                           },
                           onLongPress: () => widget.selectionProvider.toggle(video.path),
@@ -241,6 +223,7 @@ class _VideoFolderScreenState extends State<VideoFolderScreen> {
         bottomNavigationBar: isSelectionMode
             ? ActionToolbar(
                 provider: widget.selectionProvider,
+                hasFloatingNavBar: false,
                 onAddToPlaylist: _showAddToPlaylistDialog,
                 onMove: () {},
                 onDelete: () {},

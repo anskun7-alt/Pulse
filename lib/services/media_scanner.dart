@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:hive/hive.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
@@ -51,21 +52,43 @@ void _searchDirSync(Directory dir, List<String> foundPaths, IsolateScanParams pa
     for (final entity in entities) {
       try {
         final path = entity.path;
-        final name = path.split(Platform.pathSeparator).last;
+        final name = p.basename(path);
 
         if (!params.showHidden && name.startsWith('.')) continue;
         if (params.excludedFolders.any((ex) => path.startsWith(ex))) continue;
 
         if (entity is Directory) {
-          if (name == 'Android' || name == 'data' || name == 'obb' || name == 'LOST.DIR' || name == '\$RECYCLE.BIN' || name == 'System Volume Information') continue;
+          final lowerName = name.toLowerCase();
+          if (name == 'Android' ||
+              name == 'data' ||
+              name == 'obb' ||
+              name == 'LOST.DIR' ||
+              name == '\$RECYCLE.BIN' ||
+              name == 'System Volume Information' ||
+              name == 'node_modules' ||
+              name == '.git' ||
+              lowerName == 'ringtones' ||
+              lowerName == 'notifications' ||
+              lowerName == 'alarms' ||
+              lowerName == 'voice recorder' ||
+              lowerName == 'recordings' ||
+              lowerName == 'callrecordings') {
+            continue;
+          }
           _searchDirSync(entity, foundPaths, params);
         } else if (entity is File) {
-          final dotIdx = name.lastIndexOf('.');
-          if (dotIdx != -1) {
-            final ext = name.substring(dotIdx + 1).toLowerCase();
-            if (params.audioExtensions.contains(ext) || params.videoExtensions.contains(ext)) {
-              foundPaths.add(path);
+          final ext = p.extension(path).replaceFirst('.', '').toLowerCase();
+          if (params.audioExtensions.contains(ext) || params.videoExtensions.contains(ext)) {
+            final lowerPath = path.toLowerCase();
+            if (lowerPath.contains('/ringtones/') ||
+                lowerPath.contains('/notifications/') ||
+                lowerPath.contains('/alarms/') ||
+                lowerPath.contains('voice recorder') ||
+                lowerPath.contains('/recordings/') ||
+                lowerPath.contains('whatsapp voice notes')) {
+              continue;
             }
+            foundPaths.add(path);
           }
         }
       } catch (_) {}
@@ -132,7 +155,7 @@ class MediaScanner {
       }
     }
     // Perform heavy scan in an isolate.
-    final List<String> paths = await compute(_performScan, null);
+    await compute(_performScan, null);
     // After isolate finishes, process metadata as in original scan logic.
     // For brevity, we reuse the existing scan implementation logic.
     await scan(); // existing method updates cache and UI.
@@ -159,11 +182,28 @@ class MediaScanner {
         final path = entity.path;
         final name = path.split(Platform.pathSeparator).last;
         if (entity is Directory) {
-          if (name == 'Android' || name == 'data' || name == 'obb' || name == 'LOST.DIR') continue;
+          final lowerName = name.toLowerCase();
+          if (name == 'Android' ||
+              name == 'data' ||
+              name == 'obb' ||
+              name == 'LOST.DIR' ||
+              lowerName == 'ringtones' ||
+              lowerName == 'notifications' ||
+              lowerName == 'alarms' ||
+              lowerName == 'voice recorder' ||
+              lowerName == 'recordings') continue;
           await _searchDirectoryStatic(entity, foundPaths);
         } else if (entity is File) {
           final ext = name.split('.').last.toLowerCase();
           if (audioExtensions.contains(ext) || videoExtensions.contains(ext)) {
+            final lowerPath = path.toLowerCase();
+            if (lowerPath.contains('/ringtones/') ||
+                lowerPath.contains('/notifications/') ||
+                lowerPath.contains('/alarms/') ||
+                lowerPath.contains('voice recorder') ||
+                lowerPath.contains('/recordings/')) {
+              continue;
+            }
             foundPaths.add(path);
           }
         }
@@ -193,11 +233,11 @@ class MediaScanner {
     // settings_box is already safely opened in main.dart
     _settingsBox = Hive.box('settings_box');
     
-    _loadCachedFiles();
+    await _loadCachedFiles();
   }
 
-  void _loadCachedFiles() {
-    // Load cached media entries safely, skipping corrupted items
+  Future<void> _loadCachedFiles() async {
+    // 1. Load from Hive
     final list = <MediaFile>[];
     for (var key in _mediaBox.keys) {
       final map = _mediaBox.get(key);
@@ -206,11 +246,21 @@ class MediaScanner {
           list.add(MediaFile.fromMap(map));
         } catch (e) {
           debugPrint('Corrupted media entry for key $key: $e');
-          // Optionally delete the bad entry to avoid future errors
-          _mediaBox.delete(key);
         }
       }
     }
+
+    // 2. If Hive had nothing, fallback to JSON cache file
+    if (list.isEmpty) {
+      final jsonCached = await _loadCache();
+      if (jsonCached.isNotEmpty) {
+        for (var f in jsonCached) {
+          list.add(f);
+          await _mediaBox.put(f.path, f.toMap());
+        }
+      }
+    }
+
     // Sort: newest added first
     list.sort((a, b) => b.addedDate.compareTo(a.addedDate));
     allFiles.value = list;
@@ -237,18 +287,278 @@ class MediaScanner {
     final list = getCustomFolders();
     list.remove(path);
     await _settingsBox.put('custom_scan_folders', list);
+    await scan();
   }
 
   Future<String?> pickAndAddCustomFolder() async {
-    final selectedDir = await FilePicker.getDirectoryPath(
-      dialogTitle: 'Select Folder with Music or Videos',
-    );
-    if (selectedDir != null && selectedDir.isNotEmpty) {
-      await addCustomFolder(selectedDir);
-      await scan();
-      return selectedDir;
+    try {
+      final String? selectedDirectory = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Select Folder with Music or Videos',
+      );
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        await addCustomFolder(selectedDirectory);
+        await scanFolder(selectedDirectory);
+        return selectedDirectory;
+      }
+    } catch (e) {
+      debugPrint('Error picking custom folder: $e');
     }
     return null;
+  }
+
+  Future<String?> pickAndAddExcludedFolder() async {
+    try {
+      final String? selectedDirectory = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Select Folder to Exclude from Library',
+      );
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        await addExcludedFolder(selectedDirectory);
+        return selectedDirectory;
+      }
+    } catch (e) {
+      debugPrint('Error picking excluded folder: $e');
+    }
+    return null;
+  }
+
+  List<String> getExcludedFolders() {
+    try {
+      return List<String>.from(_settingsBox.get('excluded_folders', defaultValue: []));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> addExcludedFolder(String path) async {
+    final list = getExcludedFolders();
+    if (!list.contains(path)) {
+      list.add(path);
+      await _settingsBox.put('excluded_folders', list);
+      // Remove any currently loaded files that belong to this excluded folder
+      allFiles.value = allFiles.value.where((f) => !f.path.startsWith(path)).toList();
+    }
+  }
+
+  Future<void> removeExcludedFolder(String path) async {
+    final list = getExcludedFolders();
+    list.remove(path);
+    await _settingsBox.put('excluded_folders', list);
+    await scan();
+  }
+
+  Future<void> scanMedia() async => scan();
+
+  MediaFile createFromPath(String filePath) {
+    final cleanPath = filePath.replaceAll('"', '').trim();
+    final isContentUri = cleanPath.startsWith('content://');
+    final isNetwork = cleanPath.startsWith('http://') || cleanPath.startsWith('https://') || cleanPath.startsWith('rtsp://');
+
+    String fileName;
+    if (isContentUri) {
+      try {
+        final decoded = Uri.decodeFull(cleanPath);
+        final segments = decoded.split('/');
+        fileName = segments.isNotEmpty ? segments.last : 'Video';
+      } catch (_) {
+        fileName = 'Opened Video';
+      }
+    } else if (isNetwork) {
+      try {
+        final uri = Uri.parse(cleanPath);
+        fileName = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : 'Stream';
+      } catch (_) {
+        fileName = 'Network Stream';
+      }
+    } else {
+      fileName = p.basename(cleanPath);
+    }
+
+    final dotIdx = fileName.lastIndexOf('.');
+    final ext = dotIdx != -1 ? fileName.substring(dotIdx + 1).toLowerCase() : '';
+    final isAudioExt = audioExtensions.contains(ext);
+    final isVideo = !isAudioExt; // Default to video for unknown streams/content URIs
+
+    final title = dotIdx != -1 ? fileName.substring(0, dotIdx) : fileName;
+
+    return MediaFile(
+      id: cleanPath,
+      path: cleanPath,
+      title: title.isNotEmpty ? title : 'Media File',
+      artist: isVideo ? 'Video' : 'Audio',
+      album: isVideo ? 'Videos' : 'Audios',
+      duration: Duration.zero,
+      size: 0,
+      addedDate: DateTime.now(),
+      isVideo: isVideo,
+      isFavorite: false,
+    );
+  }
+
+  Future<MediaFile?> scanFile(String filePath) async {
+    try {
+      final cleanPath = filePath.replaceAll('"', '').trim();
+      final isSpecialUri = cleanPath.startsWith('content://') ||
+          cleanPath.startsWith('http://') ||
+          cleanPath.startsWith('https://') ||
+          cleanPath.startsWith('rtsp://');
+
+      if (isSpecialUri) {
+        final fallback = createFromPath(cleanPath);
+        if (_mediaBox.isOpen) {
+          await _mediaBox.put(cleanPath, fallback.toMap());
+        }
+        return fallback;
+      }
+
+      final file = File(cleanPath);
+      if (!await file.exists()) {
+        return createFromPath(cleanPath);
+      }
+
+      final ext = p.extension(cleanPath).replaceFirst('.', '').toLowerCase();
+      final isVideo = videoExtensions.contains(ext);
+      MediaFile mediaFile;
+      try {
+        mediaFile = await MetadataService.instance.extractMetadata(file, isVideo: isVideo);
+      } catch (_) {
+        mediaFile = createFromPath(cleanPath);
+      }
+
+      if (_mediaBox.isOpen) {
+        await _mediaBox.put(cleanPath, mediaFile.toMap());
+      }
+      final currentList = List<MediaFile>.from(allFiles.value);
+      currentList.removeWhere((f) => f.path == cleanPath);
+      currentList.insert(0, mediaFile);
+      allFiles.value = currentList;
+      await _saveCache(currentList);
+      return mediaFile;
+    } catch (e) {
+      debugPrint('Error scanning file $filePath: $e');
+      return createFromPath(filePath);
+    }
+  }
+
+  Future<void> scanFolder(String folderPath) async {
+    isScanning.value = true;
+    scanStatus.value = "Scanning ${p.basename(folderPath)}...";
+    scanProgress.value = 0.0;
+
+    final List<String> foundPaths = [];
+    final dir = Directory(folderPath);
+    if (dir.existsSync()) {
+      final showHidden = _settingsBox.get('show_hidden_files', defaultValue: false) as bool;
+      final excludedFolders = List<String>.from(_settingsBox.get('excluded_folders', defaultValue: []));
+      _searchDirSync(
+        dir,
+        foundPaths,
+        IsolateScanParams(
+          rootPaths: [folderPath],
+          showHidden: showHidden,
+          excludedFolders: excludedFolders,
+          audioExtensions: audioExtensions,
+          videoExtensions: videoExtensions,
+        ),
+      );
+    }
+
+    if (foundPaths.isNotEmpty) {
+      final List<MediaFile> newFiles = [];
+      int index = 0;
+      for (var path in foundPaths) {
+        index++;
+        scanProgress.value = index / foundPaths.length;
+        scanStatus.value = "Processing: ${p.basename(path)}";
+
+        if (_mediaBox.containsKey(path)) {
+          final map = _mediaBox.get(path);
+          if (map is Map) {
+            final cachedFile = MediaFile.fromMap(map);
+            newFiles.add(cachedFile);
+            continue;
+          }
+        }
+
+        final file = File(path);
+        if (await file.exists()) {
+          final ext = p.extension(path).replaceFirst('.', '').toLowerCase();
+          final isVideo = videoExtensions.contains(ext);
+          final mediaFile = await MetadataService.instance.extractMetadata(file, isVideo: isVideo);
+          await _mediaBox.put(path, mediaFile.toMap());
+          newFiles.add(mediaFile);
+        }
+      }
+
+      final Map<String, MediaFile> finalMap = {};
+      for (var key in _mediaBox.keys) {
+        final map = _mediaBox.get(key);
+        if (map is Map) {
+          try {
+            final mf = MediaFile.fromMap(map);
+            finalMap[mf.path] = mf;
+          } catch (_) {}
+        }
+      }
+      for (var f in newFiles) {
+        finalMap[f.path] = f;
+      }
+
+      final allList = finalMap.values.toList()..sort((a, b) => b.addedDate.compareTo(a.addedDate));
+      allFiles.value = allList;
+      await _saveCache(allList);
+      await PlaylistService.instance.loadFavorites(allList);
+    }
+
+    scanStatus.value = "Scan complete!";
+    isScanning.value = false;
+  }
+
+  Future<List<MediaFile>> _scanAndroidMediaStore() async {
+    try {
+      const channel = MethodChannel('com.pulse.player/media_intent');
+      final rawList = await channel.invokeListMethod<dynamic>('scanMediaStore');
+      if (rawList == null || rawList.isEmpty) return [];
+
+      final List<MediaFile> scanned = [];
+      for (final item in rawList) {
+        if (item is! Map) continue;
+        try {
+          final path = item['path'] as String?;
+          if (path == null || path.isEmpty) continue;
+
+          final title = item['title'] as String? ?? p.basenameWithoutExtension(path);
+          final artist = item['artist'] as String? ?? 'Unknown Artist';
+          final album = item['album'] as String? ?? 'Unknown Album';
+          final durationMs = (item['durationMs'] as num?)?.toInt() ?? 0;
+          final size = (item['size'] as num?)?.toInt() ?? 0;
+          final dateSec = (item['dateModifiedSec'] as num?)?.toInt() ?? 0;
+          final isVideo = item['isVideo'] as bool? ?? false;
+          final artUri = item['albumArtUri'] as String?;
+
+          final media = MediaFile(
+            id: path,
+            title: MetadataService.instance.cleanTitle(title),
+            artist: artist,
+            album: album,
+            path: path,
+            duration: Duration(milliseconds: durationMs),
+            isVideo: isVideo,
+            size: size,
+            addedDate: dateSec > 0
+                ? DateTime.fromMillisecondsSinceEpoch(dateSec * 1000)
+                : DateTime.now(),
+            albumArtPath: artUri,
+          );
+
+          scanned.add(media);
+          await _mediaBox.put(path, media.toMap());
+        } catch (_) {}
+      }
+      return scanned;
+    } catch (e) {
+      debugPrint('[MediaScanner] Android MediaStore scan error: $e');
+      return [];
+    }
   }
 
   Future<void> scan() async {
@@ -260,24 +570,61 @@ class MediaScanner {
 
     if (Platform.isAndroid) {
       try {
-        // Handle permission requests based on API level
-        final audioStatus = await Permission.audio.request();
-        final videoStatus = await Permission.videos.request();
-        final storageStatus = await Permission.storage.request();
-        final photosStatus = await Permission.photos.request();
-        final manageStatus = await Permission.manageExternalStorage.request();
-        final notificationStatus = await Permission.notification.request();
+        final statuses = await [
+          Permission.audio,
+          Permission.videos,
+          Permission.storage,
+          Permission.photos,
+        ].request();
 
-        // Check if at least one permission is granted
-        if (!audioStatus.isGranted && !videoStatus.isGranted && !storageStatus.isGranted && !photosStatus.isGranted && !manageStatus.isGranted) {
-          scanStatus.value = "Permissions denied. Please grant media access in settings.";
-          isScanning.value = false;
-          return;
+        final hasMediaAccess = statuses.values.any((status) => status.isGranted);
+        if (!hasMediaAccess) {
+          final manageGranted = await Permission.manageExternalStorage.isGranted;
+          final storageGranted = await Permission.storage.isGranted;
+          if (!manageGranted && !storageGranted) {
+            scanStatus.value = "Permissions denied. Please grant media access in settings.";
+            isScanning.value = false;
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint("Permission request failed: $e");
+      }
+
+      // Fast Android native MediaStore indexing (instant sub-100ms)
+      scanStatus.value = "Scanning library via Android MediaStore...";
+      final msFiles = await _scanAndroidMediaStore();
+      if (msFiles.isNotEmpty) {
+        debugPrint('[MediaScanner] Found ${msFiles.length} files via native MediaStore');
+        
+        // Also index any custom folders the user explicitly added
+        final customFolders = getCustomFolders();
+        for (final folder in customFolders) {
+          await scanFolder(folder);
         }
 
-        debugPrint("Permissions - Audio: ${audioStatus.isGranted}, Video: ${videoStatus.isGranted}, Storage: ${storageStatus.isGranted}, Photos: ${photosStatus.isGranted}, Manage: ${manageStatus.isGranted}, Notification: ${notificationStatus.isGranted}");
-      } catch (e) {
-        debugPrint("Permission request failed (likely running in background isolate): $e");
+        final Map<String, MediaFile> finalMap = {};
+        for (var key in _mediaBox.keys) {
+          final map = _mediaBox.get(key);
+          if (map is Map) {
+            try {
+              final mf = MediaFile.fromMap(map);
+              finalMap[mf.path] = mf;
+            } catch (_) {}
+          }
+        }
+        for (var f in msFiles) {
+          finalMap[f.path] = f;
+        }
+
+        final allList = finalMap.values.toList()..sort((a, b) => b.addedDate.compareTo(a.addedDate));
+        allFiles.value = allList;
+        await _saveCache(allList);
+        await PlaylistService.instance.loadFavorites(allList);
+
+        scanStatus.value = "Scan complete! Found ${allList.length} items.";
+        isScanning.value = false;
+        return;
       }
     }
 
@@ -399,18 +746,33 @@ class MediaScanner {
       }
     }
 
-    // Clean up cache of deleted files
-    final currentPaths = foundPaths.toSet();
+    // Only delete cache entries if the file truly no longer exists on disk
     for (var key in cachedPaths) {
-      if (!currentPaths.contains(key)) {
-        await _mediaBox.delete(key);
-      }
+      try {
+        if (!File(key).existsSync()) {
+          await _mediaBox.delete(key);
+        }
+      } catch (_) {}
     }
 
-    // Update list
-    newFiles.sort((a, b) => b.addedDate.compareTo(a.addedDate));
-    allFiles.value = newFiles;
-    await PlaylistService.instance.loadFavorites(newFiles);
+    // Combine newly found files with all valid existing cached files
+    final Map<String, MediaFile> finalMap = {};
+    for (var key in _mediaBox.keys) {
+      final map = _mediaBox.get(key);
+      if (map is Map) {
+        try {
+          final mf = MediaFile.fromMap(map);
+          finalMap[mf.path] = mf;
+        } catch (_) {}
+      }
+    }
+    for (var f in newFiles) {
+      finalMap[f.path] = f;
+    }
+
+    final allList = finalMap.values.toList()..sort((a, b) => b.addedDate.compareTo(a.addedDate));
+    allFiles.value = allList;
+    await PlaylistService.instance.loadFavorites(allList);
 
     scanStatus.value = "Scan complete!";
     isScanning.value = false;

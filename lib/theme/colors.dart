@@ -24,10 +24,44 @@ class PulseColors {
     }
   }
 
-  static bool get isLight => _themeMode == 'Light' || _themeMode == 'Creme';
+  static String get themeMode => _themeMode;
+
+  static String get effectiveTheme {
+    final mode = _themeMode;
+    if (mode == 'System') {
+      try {
+        final brightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
+        return brightness == Brightness.light ? 'Light' : 'Dark';
+      } catch (_) {
+        return 'Dark';
+      }
+    }
+    return mode;
+  }
+
+  static bool get isSystemTheme => _themeMode == 'System';
+
+  static bool get isLight {
+    final eff = effectiveTheme;
+    return eff == 'Light' || eff == 'Creme';
+  }
+
+  static void notifyPlatformBrightnessChanged() {
+    if (isSystemTheme) {
+      themeNotifier.value = 'System_${DateTime.now().millisecondsSinceEpoch}';
+    }
+  }
+
+  static void toggleLightDark() {
+    if (isLight) {
+      setTheme('Dark');
+    } else {
+      setTheme('Light');
+    }
+  }
 
   static Color get background {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.background;
       case 'Light':
@@ -45,13 +79,19 @@ class PulseColors {
         return GamerColors.background;
       case 'Turkish':
         return TurkishColors.background;
+      case 'Cyberpunk':
+        return CyberpunkColors.background;
+      case 'Nordic':
+        return NordicColors.background;
+      case 'Royale':
+        return RoyaleColors.background;
       default:
         return const Color(0xFF0F121C); // Deep midnight indigo-charcoal
     }
   }
 
   static Color get surface {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.surface;
       case 'Light':
@@ -69,13 +109,19 @@ class PulseColors {
         return GamerColors.surface;
       case 'Turkish':
         return TurkishColors.surface;
+      case 'Cyberpunk':
+        return CyberpunkColors.surface;
+      case 'Nordic':
+        return NordicColors.surface;
+      case 'Royale':
+        return RoyaleColors.surface;
       default:
         return const Color(0xFF171B29);
     }
   }
 
   static Color get surfaceHigh {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.surfaceHigh;
       case 'Light':
@@ -93,13 +139,19 @@ class PulseColors {
         return GamerColors.surfaceHigh;
       case 'Turkish':
         return TurkishColors.surfaceHigh;
+      case 'Cyberpunk':
+        return CyberpunkColors.surfaceHigh;
+      case 'Nordic':
+        return NordicColors.surfaceHigh;
+      case 'Royale':
+        return RoyaleColors.surfaceHigh;
       default:
         return const Color(0xFF22273B);
     }
   }
 
   static Color get accentPrimary {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.accentPrimary;
       case 'Light':
@@ -117,13 +169,19 @@ class PulseColors {
         return GamerColors.accentPrimary;
       case 'Turkish':
         return TurkishColors.accentPrimary;
+      case 'Cyberpunk':
+        return CyberpunkColors.accentPrimary;
+      case 'Nordic':
+        return NordicColors.accentPrimary;
+      case 'Royale':
+        return RoyaleColors.accentPrimary;
       default:
         return const Color(0xFF818CF8); // Vibrant Electric Indigo
     }
   }
 
   static Color get accentSecondary {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.accentSecondary;
       case 'Light':
@@ -141,13 +199,19 @@ class PulseColors {
         return GamerColors.accentSecondary;
       case 'Turkish':
         return TurkishColors.accentSecondary;
+      case 'Cyberpunk':
+        return CyberpunkColors.accentSecondary;
+      case 'Nordic':
+        return NordicColors.accentSecondary;
+      case 'Royale':
+        return RoyaleColors.accentSecondary;
       default:
         return const Color(0xFF38BDF8); // Electric Sky Cyan
     }
   }
 
   static Color get success {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.success;
       case 'Light':
@@ -165,13 +229,19 @@ class PulseColors {
         return GamerColors.success;
       case 'Turkish':
         return TurkishColors.success;
+      case 'Cyberpunk':
+        return CyberpunkColors.success;
+      case 'Nordic':
+        return NordicColors.success;
+      case 'Royale':
+        return RoyaleColors.success;
       default:
         return const Color(0xFF22C55E);
     }
   }
 
   static Color get danger {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.danger;
       case 'Light':
@@ -189,13 +259,19 @@ class PulseColors {
         return GamerColors.danger;
       case 'Turkish':
         return TurkishColors.danger;
+      case 'Cyberpunk':
+        return CyberpunkColors.danger;
+      case 'Nordic':
+        return NordicColors.danger;
+      case 'Royale':
+        return RoyaleColors.danger;
       default:
         return const Color(0xFFEF4444);
     }
   }
 
   static Color get textPrimary {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'Light':
         return LightColors.textPrimary;
       case 'Creme':
@@ -211,13 +287,19 @@ class PulseColors {
         return GamerColors.textPrimary;
       case 'Turkish':
         return TurkishColors.textPrimary;
+      case 'Cyberpunk':
+        return CyberpunkColors.textPrimary;
+      case 'Nordic':
+        return NordicColors.textPrimary;
+      case 'Royale':
+        return RoyaleColors.textPrimary;
       default:
         return const Color(0xFFF8FAFC);
     }
   }
 
   static Color get textSecondary {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'Light':
         return LightColors.textSecondary;
       case 'Creme':
@@ -233,13 +315,19 @@ class PulseColors {
         return GamerColors.textSecondary;
       case 'Turkish':
         return TurkishColors.textSecondary;
+      case 'Cyberpunk':
+        return CyberpunkColors.textSecondary;
+      case 'Nordic':
+        return NordicColors.textSecondary;
+      case 'Royale':
+        return RoyaleColors.textSecondary;
       default:
         return const Color(0xFF94A3B8);
     }
   }
 
   static Color get onAccentPrimary {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.onAccentPrimary;
       case 'Light':
@@ -252,7 +340,7 @@ class PulseColors {
   }
 
   static Color get onAccentSecondary {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'AMOLED':
         return AmoledColors.onAccentSecondary;
       case 'Light':
@@ -265,7 +353,7 @@ class PulseColors {
   }
 
   static Color get activeAccentPrimary {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'Light':
         return LightColors.onAccentPrimary;
       case 'Creme':
@@ -276,7 +364,7 @@ class PulseColors {
   }
 
   static Color get activeAccentSecondary {
-    switch (_themeMode) {
+    switch (effectiveTheme) {
       case 'Light':
         return LightColors.onAccentSecondary;
       case 'Creme':
@@ -294,14 +382,14 @@ class PulseColors {
     );
   }
 
-  static List<BoxShadow> glowShadow(Color color) {
-    final opacity = isLight ? 0.12 : 0.28;
+  static List<BoxShadow> glowShadow(Color color, {double? radius, double? spread, Offset? offset}) {
+    final opacity = isLight ? 0.14 : 0.32;
     return [
       BoxShadow(
         color: color.withValues(alpha: opacity),
-        blurRadius: 16,
-        spreadRadius: -4,
-        offset: const Offset(0, 8),
+        blurRadius: radius ?? 18,
+        spreadRadius: spread ?? 0,
+        offset: offset ?? const Offset(0, 4),
       ),
     ];
   }
@@ -364,17 +452,17 @@ class CremeColors {
   static const Color onAccentSecondary = Color(0xFF14532D); // High-contrast text emerald
 }
 
-/// 🤠 Red Dead Redemption 2 Outlaw theme
+/// 🤠 Red Dead Redemption 2 Outlaw theme - Iconic Blood Red & Silhouette Black
 class Rdr2Colors {
-  static const Color background = Color(0xFF100707); // Dark Frontier Mahogany
-  static const Color surface = Color(0xFF1D0B0D); // Weathered Saloon Ironwood
-  static const Color surfaceHigh = Color(0xFF2C1215); // Outlaw Saddle Leather
+  static const Color background = Color(0xFF0F0606); // Deep Charred Outlaw Black
+  static const Color surface = Color(0xFF1B0709); // Weathered Saloon Ironwood
+  static const Color surfaceHigh = Color(0xFF2C0B0F); // Deep Frontier Crimson
   
-  static const Color accentPrimary = Color(0xFFDC2626); // RDR Blood Crimson
-  static const Color accentSecondary = Color(0xFFD97706); // Amber Sunset Gold
+  static const Color accentPrimary = Color(0xFFD61A24); // RDR2 Iconic Poster Blood Red
+  static const Color accentSecondary = Color(0xFFFF2A3B); // Vivid Outlaw Scarlet Highlight
   
-  static const Color textPrimary = Color(0xFFFDF2F0); // Parchment White
-  static const Color textSecondary = Color(0xFFBCA3A3); // Dusty Trail Brown
+  static const Color textPrimary = Color(0xFFFAF2E6); // Stencil Parchment White
+  static const Color textSecondary = Color(0xFFC7AAA0); // Dusty Trail Sepia
 
   static const Color success = Color(0xFF15803D);
   static const Color danger = Color(0xFF991B1B);
@@ -443,3 +531,52 @@ class TurkishColors {
   static const Color success = Color(0xFF16A34A);
   static const Color danger = Color(0xFFDC2626);
 }
+
+/// ⚡ Cyberpunk 2077 Neon theme - Electric Cyber Yellow & Hot Magenta
+class CyberpunkColors {
+  static const Color background = Color(0xFF07070A); // Obsidian Void
+  static const Color surface = Color(0xFF111218); // Night City Carbon
+  static const Color surfaceHigh = Color(0xFF1C1E29); // Hologram Slate
+  
+  static const Color accentPrimary = Color(0xFFFCEE0A); // High-voltage Cyberpunk Yellow
+  static const Color accentSecondary = Color(0xFFFF0055); // Neon Arasaka Magenta
+  
+  static const Color textPrimary = Color(0xFFFFFFFF);
+  static const Color textSecondary = Color(0xFF9092A8);
+
+  static const Color success = Color(0xFF00FF9F);
+  static const Color danger = Color(0xFFFF0055);
+}
+
+/// ❄️ Nordic Glacier Frost theme - Arctic Blue & Polar Ice
+class NordicColors {
+  static const Color background = Color(0xFF070D18); // Deep Arctic Ocean
+  static const Color surface = Color(0xFF0E1A2D); // Iceberg Surface
+  static const Color surfaceHigh = Color(0xFF172944); // Crystalline Fjord
+  
+  static const Color accentPrimary = Color(0xFF48CAE4); // Vivid Glacier Turquoise
+  static const Color accentSecondary = Color(0xFF90E0EF); // Polar Aurora Blue
+  
+  static const Color textPrimary = Color(0xFFF0F8FF);
+  static const Color textSecondary = Color(0xFF8DA4C4);
+
+  static const Color success = Color(0xFF2DD4BF);
+  static const Color danger = Color(0xFFF87171);
+}
+
+/// 👑 Royale Gold & Onyx theme - Pure Noir & 24K Imperial Brushed Gold
+class RoyaleColors {
+  static const Color background = Color(0xFF0A0908); // Imperial Noir
+  static const Color surface = Color(0xFF161412); // Velvet Charcoal
+  static const Color surfaceHigh = Color(0xFF26211C); // Burnished Gold Shadow
+  
+  static const Color accentPrimary = Color(0xFFD4AF37); // 24K Pure Imperial Gold
+  static const Color accentSecondary = Color(0xFFFFB703); // Radiant Warm Amber Gold
+  
+  static const Color textPrimary = Color(0xFFFFFDF5);
+  static const Color textSecondary = Color(0xFFC5BCA8);
+
+  static const Color success = Color(0xFF10B981);
+  static const Color danger = Color(0xFFE11D48);
+}
+

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import '../models/media_file.dart';
 import '../models/playlist.dart';
 import '../services/media_scanner.dart';
@@ -11,6 +12,9 @@ import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../widgets/video_thumbnail_widget.dart';
 import '../widgets/action_toolbar.dart';
+import '../widgets/media_picker_sheet.dart';
+import '../widgets/add_to_playlist_sheet.dart';
+import '../widgets/interactive_elements.dart';
 import '../providers/selection_provider.dart';
 
 class PlaylistDetailScreen extends StatefulWidget {
@@ -83,6 +87,28 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     return path.replaceAll('\\', '/').toLowerCase();
   }
 
+  Future<void> _pickCustomCover() async {
+    if (widget.isSmart) return;
+    final playlist = _currentPlaylist ?? widget.playlist;
+    try {
+      final result = await FilePicker.pickFiles(type: FileType.image);
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        await _playlistService.updatePlaylistCover(playlist.id, path);
+        setState(() {
+          _currentPlaylist = playlist.copyWith(coverImagePath: path);
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: const Text('Playlist thumbnail updated!'), backgroundColor: PulseColors.success),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking playlist image: $e');
+    }
+  }
+
   void _playAll({bool shuffle = false}) {
     if (_tracks.isEmpty) return;
     final playback = PlaybackService.instance;
@@ -114,7 +140,16 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
-  Widget _buildMosaicThumbnail(List<MediaFile> items) {
+  Widget _buildMosaicThumbnail(List<MediaFile> items, {String? coverImagePath}) {
+    if (coverImagePath != null && File(coverImagePath).existsSync()) {
+      return Image.file(
+        File(coverImagePath),
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
+
     final List<String> validArtPaths = [];
     for (var track in items) {
       if (track.albumArtPath != null && File(track.albumArtPath!).existsSync()) {
@@ -147,6 +182,24 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     );
   }
 
+  void _showMediaPickerSheet() {
+    if (widget.isSmart) return;
+    final playlist = _currentPlaylist ?? widget.playlist;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => MediaPickerSheet(
+        playlist: playlist,
+        onAdded: () {
+          setState(() {
+            _loadTracks();
+          });
+        },
+      ),
+    );
+  }
+
   void _showMenu(BuildContext context) {
     if (widget.isSmart) return;
 
@@ -172,6 +225,28 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                 ),
               ),
               const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(Icons.add_circle_outline_rounded, color: PulseColors.accentSecondary),
+                title: Text(
+                  "Add Songs & Videos",
+                  style: PulseTypography.bodyLarge.copyWith(
+                    color: PulseColors.accentSecondary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showMediaPickerSheet();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.image_outlined, color: Colors.white),
+                title: Text("Change Cover / Thumbnail", style: PulseTypography.bodyLarge),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickCustomCover();
+                },
+              ),
               ListTile(
                 leading: const Icon(Icons.edit_rounded, color: Colors.white),
                 title: Text("Rename Playlist", style: PulseTypography.bodyLarge),
@@ -282,33 +357,17 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final selectedFiles = _tracks.where((t) => _selection.isSelected(t.path)).toList();
     if (selectedFiles.isEmpty) return;
 
-    final playlists = PlaylistService.instance.playlists.value;
-    await showModalBottomSheet(
+    showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => _AddToPlaylistSheet(
-        playlists: playlists,
-        onChosen: (playlistId) async {
-          for (final file in selectedFiles) {
-            await PlaylistService.instance.addToPlaylist(playlistId, file.path);
-          }
+      isScrollControlled: true,
+      builder: (context) => AddToPlaylistSheet.multiple(
+        mediaFiles: selectedFiles,
+        onAdded: (playlistId) {
           _selection.clear();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text('${selectedFiles.length} item(s) added to playlist'),
-              backgroundColor: PulseColors.success,
-            ));
-          }
-        },
-        onCreateNew: (name) async {
-          final pl = await PlaylistService.instance.createPlaylist(name);
-          for (final file in selectedFiles) {
-            await PlaylistService.instance.addToPlaylist(pl.id, file.path);
-          }
-          _selection.clear();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('${selectedFiles.length} item(s) added to "$name"'),
               backgroundColor: PulseColors.success,
             ));
           }
@@ -407,17 +466,26 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                   tooltip: 'Select all',
                                   onPressed: () => _selection.selectAll(_tracks.map((t) => t.path)),
                                 ),
-                              if (!widget.isSmart && !isSelectionMode)
+                              if (!widget.isSmart && !isSelectionMode) ...[
+                                IconButton(
+                                  icon: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
+                                  tooltip: 'Add songs & videos',
+                                  onPressed: _showMediaPickerSheet,
+                                ),
                                 IconButton(
                                   icon: const Icon(Icons.more_vert_rounded),
                                   onPressed: () => _showMenu(context),
-                                )
+                                ),
+                              ],
                             ],
                             flexibleSpace: FlexibleSpaceBar(
                               background: Stack(
                                 fit: StackFit.expand,
                                 children: [
-                                  _buildMosaicThumbnail(_tracks),
+                                  _buildMosaicThumbnail(
+                                    _tracks,
+                                    coverImagePath: _currentPlaylist?.coverImagePath ?? widget.playlist.coverImagePath,
+                                  ),
                                   Container(
                                     decoration: BoxDecoration(
                                       gradient: LinearGradient(
@@ -463,9 +531,60 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                             SliverFillRemaining(
                               hasScrollBody: false,
                               child: Center(
-                                child: Text(
-                                  "No items in this playlist.",
-                                  style: TextStyle(color: PulseColors.textSecondary),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 80,
+                                        height: 80,
+                                        decoration: BoxDecoration(
+                                          color: PulseColors.surface,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          Icons.playlist_add_rounded,
+                                          size: 40,
+                                          color: PulseColors.accentSecondary.withValues(alpha: 0.8),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        "Playlist is Empty",
+                                        style: PulseTypography.displaySmall,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        widget.isSmart
+                                            ? "No items match this smart playlist."
+                                            : "Add your favorite songs and videos to this playlist.",
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(color: PulseColors.textSecondary, fontSize: 14),
+                                      ),
+                                      if (!widget.isSmart) ...[
+                                        const SizedBox(height: 24),
+                                        ElevatedButton.icon(
+                                          onPressed: _showMediaPickerSheet,
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: PulseColors.accentSecondary,
+                                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(14),
+                                            ),
+                                          ),
+                                          icon: const Icon(Icons.add_rounded, color: Colors.black),
+                                          label: Text(
+                                            "Add Songs & Videos",
+                                            style: PulseTypography.bodyLarge.copyWith(
+                                              color: Colors.black,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             )
@@ -519,6 +638,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                         bottom: 0,
                         child: ActionToolbar(
                           provider: _selection,
+                          hasFloatingNavBar: false,
                           onAddToPlaylist: _handleBulkAddToPlaylist,
                           onMove: () {
                             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -526,6 +646,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                             ));
                           },
                           onDelete: _handleBulkRemove,
+                          onPlaySelected: () {
+                            final selected = _tracks.where((t) => _selection.isSelected(t.path)).toList();
+                            if (selected.isNotEmpty) {
+                              _selection.clear();
+                              PlaybackService.instance.playTrack(selected.first, newQueue: selected);
+                            }
+                          },
                         ),
                       ),
                     ],
@@ -540,70 +667,98 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
   Widget _buildActionButtons() {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: Container(
-            height: 50,
-            decoration: BoxDecoration(
-              gradient: PulseColors.accentGradient,
-              borderRadius: BorderRadius.circular(25),
-              boxShadow: [
-                BoxShadow(
-                  color: PulseColors.accentPrimary.withOpacity(0.3),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                )
-              ],
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(25),
-                onTap: () => _playAll(shuffle: false),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.play_arrow_rounded, color: Colors.black, size: 28),
-                    const SizedBox(width: 8),
-                    Text(
-                      "Play All",
-                      style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold, color: Colors.black),
-                    ),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                height: 50,
+                decoration: BoxDecoration(
+                  gradient: PulseColors.accentGradient,
+                  borderRadius: BorderRadius.circular(25),
+                  boxShadow: [
+                    BoxShadow(
+                      color: PulseColors.accentPrimary.withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    )
                   ],
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(25),
+                    onTap: () => _playAll(shuffle: false),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.play_arrow_rounded, color: Colors.black, size: 28),
+                        const SizedBox(width: 8),
+                        Text(
+                          "Play All",
+                          style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Container(
-            height: 50,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(25),
-              border: Border.all(color: Colors.white24, width: 1),
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(25),
-                onTap: () => _playAll(shuffle: true),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.shuffle_rounded, color: Colors.white, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      "Shuffle",
-                      style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Container(
+                height: 50,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(25),
+                  border: Border.all(color: Colors.white24, width: 1),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(25),
+                    onTap: () => _playAll(shuffle: true),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.shuffle_rounded, color: Colors.white, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          "Shuffle",
+                          style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
+            if (!widget.isSmart) ...[
+              const SizedBox(width: 12),
+              Container(
+                height: 50,
+                width: 50,
+                decoration: BoxDecoration(
+                  color: PulseColors.accentSecondary.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: PulseColors.accentSecondary.withValues(alpha: 0.4), width: 1),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(25),
+                    onTap: _showMediaPickerSheet,
+                    child: Icon(
+                      Icons.add_rounded,
+                      color: PulseColors.accentSecondary,
+                      size: 26,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
       ],
     );
@@ -618,7 +773,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         final isCurrent = currentTrack != null &&
             currentTrack.path.replaceAll('\\', '/').toLowerCase() == track.path.replaceAll('\\', '/').toLowerCase();
 
-        return Container(
+        final card = Container(
           margin: const EdgeInsets.symmetric(vertical: 6),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
@@ -725,28 +880,32 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                             child: Icon(Icons.drag_handle_rounded, color: Colors.white38),
                           ),
                         ),
-                  onTap: () {
-                    if (isSelectionMode) {
-                      _selection.toggle(track.path);
-                    } else {
-                      if (track.isVideo) {
-                        final videoQueue = _tracks.where((t) => t.isVideo).toList();
-                        PlaybackService.instance.navigateToVideo(
-                          videoQueue.isNotEmpty ? videoQueue : [track],
-                          track,
-                        );
-                      } else {
-                        PlaybackService.instance.playTrack(track, newQueue: _tracks);
-                      }
-                    }
-                  },
-                  onLongPress: () {
-                    _selection.toggle(track.path);
-                  },
                 ),
               ),
             ),
           ),
+        );
+
+        return PulseQuickHold(
+          onTap: () {
+            if (isSelectionMode) {
+              _selection.toggle(track.path);
+            } else {
+              if (track.isVideo) {
+                final videoQueue = _tracks.where((t) => t.isVideo).toList();
+                PlaybackService.instance.navigateToVideo(
+                  videoQueue.isNotEmpty ? videoQueue : [track],
+                  track,
+                );
+              } else {
+                PlaybackService.instance.playTrack(track, newQueue: _tracks);
+              }
+            }
+          },
+          onHold: () {
+            _selection.toggle(track.path);
+          },
+          child: card,
         );
       },
     );
@@ -803,90 +962,3 @@ class _PlayingIndicatorState extends State<_PlayingIndicator> with SingleTickerP
   }
 }
 
-class _AddToPlaylistSheet extends StatelessWidget {
-  final List<dynamic> playlists;
-  final Future<void> Function(String playlistId) onChosen;
-  final Future<void> Function(String name) onCreateNew;
-
-  const _AddToPlaylistSheet({
-    required this.playlists,
-    required this.onChosen,
-    required this.onCreateNew,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: PulseColors.surface.withOpacity(0.97),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border.all(color: const Color(0xFF1E1E30)),
-      ),
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-            ),
-          ),
-          const SizedBox(height: 20),
-          Text('Add to Playlist', style: PulseTypography.displayMedium),
-          const Divider(color: Colors.white10),
-          const SizedBox(height: 8),
-          ...playlists.map((p) => ListTile(
-                leading: const Icon(Icons.queue_music_rounded, color: Colors.white70),
-                title: Text(p.name, style: PulseTypography.bodyLarge),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await onChosen(p.id);
-                },
-              )),
-          ListTile(
-            leading: Icon(Icons.add_circle_outline_rounded, color: PulseColors.accentSecondary),
-            title: Text('New playlist',
-                style: PulseTypography.bodyLarge.copyWith(color: PulseColors.accentSecondary)),
-            onTap: () async {
-              Navigator.pop(context);
-              final ctrl = TextEditingController();
-              final name = await showDialog<String>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  backgroundColor: PulseColors.surface,
-                  title: Text('New Playlist', style: PulseTypography.displayMedium),
-                  content: TextField(
-                    controller: ctrl,
-                    autofocus: true,
-                    style: PulseTypography.bodyLarge,
-                    decoration: InputDecoration(
-                      hintText: 'Playlist name',
-                      hintStyle: PulseTypography.bodyMedium,
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: Text('Cancel', style: PulseTypography.bodyLarge),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-                      style: ElevatedButton.styleFrom(backgroundColor: PulseColors.accentSecondary),
-                      child: const Text('Create', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
-              );
-              if (name != null && name.isNotEmpty) {
-                await onCreateNew(name);
-              }
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}

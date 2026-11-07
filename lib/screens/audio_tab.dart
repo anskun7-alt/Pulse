@@ -259,6 +259,13 @@ class _AudioTabState extends State<AudioTab>
                       onAddToPlaylist: () => _handleAddToPlaylist(list),
                       onMove: _handleMove,
                       onDelete: () => _handleDelete(list),
+                      onPlaySelected: () {
+                        final selected = list.where((f) => _selection.isSelected(f.path)).toList();
+                        if (selected.isNotEmpty) {
+                          _selection.clear();
+                          PlaybackService.instance.playTrack(selected.first, newQueue: selected);
+                        }
+                      },
                     ),
                   ),
                 ],

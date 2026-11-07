@@ -14,6 +14,9 @@ import '../services/playback_service.dart';
 import '../players/video_player_screen.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../theme/logo.dart';
+
+import '../services/view_mode_service.dart';
 
 class MusicTab extends StatefulWidget {
   const MusicTab({Key? key}) : super(key: key);
@@ -172,7 +175,13 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           if (!_isSearching)
-                            Text("Music", style: PulseTypography.displayLarge)
+                            Row(
+                              children: [
+                                PulseLogo.buildLogo(size: 32, borderRadius: BorderRadius.circular(16)),
+                                const SizedBox(width: 10),
+                                Text("Music", style: PulseTypography.displayLarge),
+                              ],
+                            )
                           else
                             Expanded(
                               child: TextField(
@@ -203,47 +212,44 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
                               ),
                             ),
                           if (!_isSearching)
-                      Row(
-                        children: [
-                          // Play All
-                          IconButton(
-                            icon: const Icon(Icons.play_arrow_rounded, color: Colors.white),
-                            onPressed: () {
-                              playbackService.playAll(tracks, shuffle: false);
-                            },
-                          ),
-                          // Shuffle
-                          IconButton(
-                            icon: const Icon(Icons.shuffle_rounded, color: Colors.white),
-                            onPressed: () {
-                              playbackService.playAll(tracks, shuffle: true);
-                            },
-                          ),
-                          // Seek Backward 5s
-                          IconButton(
-                            icon: const Icon(Icons.replay_5_rounded, color: Colors.white),
-                            onPressed: () {
-                              playbackService.seekRelative(const Duration(seconds: -5));
-                            },
-                          ),
-                          // Seek Forward 5s
-                          IconButton(
-                            icon: const Icon(Icons.forward_5_rounded, color: Colors.white),
-                            onPressed: () {
-                              playbackService.seekRelative(const Duration(seconds: 5));
-                            },
-                          ),
-                          // Search
-                          IconButton(
-                            icon: const Icon(Icons.search_rounded, color: Colors.white),
-                            onPressed: () {
-                              setState(() {
-                                _isSearching = true;
-                              });
-                            },
-                          ),
-                        ],
-                      )
+                            Row(
+                              children: [
+                                // Play All / Shuffle
+                                IconButton(
+                                  icon: const Icon(Icons.shuffle_rounded, color: Colors.white),
+                                  tooltip: 'Shuffle Play All',
+                                  onPressed: () {
+                                    playbackService.playAll(tracks, shuffle: true);
+                                  },
+                                ),
+                                // Search
+                                IconButton(
+                                  icon: const Icon(Icons.search_rounded, color: Colors.white),
+                                  tooltip: 'Search',
+                                  onPressed: () {
+                                    setState(() {
+                                      _isSearching = true;
+                                    });
+                                  },
+                                ),
+                                // View Mode Toggle
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: ViewModeService.instance.isGrid,
+                                  builder: (context, isGrid, _) {
+                                    return IconButton(
+                                      icon: Icon(
+                                        isGrid
+                                            ? Icons.format_list_bulleted_rounded
+                                            : Icons.grid_view_rounded,
+                                        color: Colors.white,
+                                      ),
+                                      tooltip: isGrid ? 'Switch to List View' : 'Switch to Grid View',
+                                      onPressed: () => ViewModeService.instance.toggleViewMode(),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
                         ],
                       ),
                     ),
@@ -316,73 +322,153 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
       );
     }
 
-    return ValueListenableBuilder<MediaFile?>(
-      valueListenable: playbackService.currentTrack,
-      builder: (context, currentTrack, child) {
-        return ListView.builder(
-          itemCount: tracks.length + 1,
-          padding: const EdgeInsets.only(left: 20, right: 20, top: 8, bottom: 168),
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return const ContinuePlayingCard();
-            }
-            final track = tracks[index - 1];
-            final isPlayingThis = currentTrack?.path == track.path;
+    return ValueListenableBuilder<bool>(
+      valueListenable: ViewModeService.instance.isGrid,
+      builder: (context, isGrid, _) {
+        return ValueListenableBuilder<MediaFile?>(
+          valueListenable: playbackService.currentTrack,
+          builder: (context, currentTrack, child) {
+            if (isGrid) {
+              return CustomScrollView(
+                physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                slivers: [
+                  const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                      child: ContinuePlayingCard(),
+                    ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.only(left: 20, right: 20, top: 8, bottom: 168),
+                    sliver: SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: MediaQuery.of(context).size.width >= 1200
+                            ? 5
+                            : (MediaQuery.of(context).size.width >= 800
+                                ? 4
+                                : (MediaQuery.of(context).size.width >= 600 ? 3 : 2)),
+                        crossAxisSpacing: 16,
+                        mainAxisSpacing: 16,
+                        childAspectRatio: 0.82,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final track = tracks[index];
+                          final isSelected = _selectedItems.value.contains(track);
 
-            return AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              decoration: BoxDecoration(
-                color: isPlayingThis 
-                    ? PulseColors.accentPrimary.withValues(alpha: 0.08) 
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: isPlayingThis 
-                      ? PulseColors.accentPrimary.withValues(alpha: 0.3) 
-                      : Colors.transparent,
-                  width: 1,
-                ),
-              ),
-              child: MediaCard(
-                file: track,
-                isGrid: false,
-                isSelectionMode: _isSelectionMode.value,
-                isSelected: _selectedItems.value.contains(track),
-                onLongPress: () {
-                  if (!_isSelectionMode.value) {
-                    _isSelectionMode.value = true;
-                    _selectedItems.value = {track};
-                  } else {
-                    if (_selectedItems.value.contains(track)) {
-                      _selectedItems.value.remove(track);
-                      if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
-                    } else {
-                      _selectedItems.value.add(track);
-                    }
-                    _selectedItems.value = Set.from(_selectedItems.value);
-                  }
-                  setState(() {});
-                },
-                onTap: () {
-                  if (_isSelectionMode.value) {
-                    if (_selectedItems.value.contains(track)) {
-                      _selectedItems.value.remove(track);
-                      if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
-                    } else {
-                      _selectedItems.value.add(track);
-                    }
-                    _selectedItems.value = Set.from(_selectedItems.value);
-                    setState(() {});
-                  } else {
-                    _handleTrackTap(track, tracks);
-                  }
-                },
-              ),
-            )
-                .animate()
-                .fadeIn(duration: 200.ms, delay: (min(index, 10) * 25).ms)
-                .slideX(begin: 0.04, end: 0, duration: 200.ms, curve: Curves.easeOutCubic);
+                          return MediaCard(
+                            file: track,
+                            isGrid: true,
+                            isSelectionMode: _isSelectionMode.value,
+                            isSelected: isSelected,
+                            onLongPress: () {
+                              if (!_isSelectionMode.value) {
+                                _isSelectionMode.value = true;
+                                _selectedItems.value = {track};
+                              } else {
+                                if (_selectedItems.value.contains(track)) {
+                                  _selectedItems.value.remove(track);
+                                  if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
+                                } else {
+                                  _selectedItems.value.add(track);
+                                }
+                                _selectedItems.value = Set.from(_selectedItems.value);
+                              }
+                              setState(() {});
+                            },
+                            onTap: () {
+                              if (_isSelectionMode.value) {
+                                if (_selectedItems.value.contains(track)) {
+                                  _selectedItems.value.remove(track);
+                                  if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
+                                } else {
+                                  _selectedItems.value.add(track);
+                                }
+                                _selectedItems.value = Set.from(_selectedItems.value);
+                                setState(() {});
+                              } else {
+                                _handleTrackTap(track, tracks);
+                              }
+                            },
+                          )
+                              .animate()
+                              .fadeIn(duration: 200.ms, delay: (min(index, 8) * 25).ms)
+                              .slideY(begin: 0.04, end: 0, duration: 200.ms, curve: Curves.easeOutCubic);
+                        },
+                        childCount: tracks.length,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            return ListView.builder(
+              itemCount: tracks.length + 1,
+              padding: const EdgeInsets.only(left: 20, right: 20, top: 8, bottom: 168),
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return const ContinuePlayingCard();
+                }
+                final track = tracks[index - 1];
+                final isPlayingThis = currentTrack?.path == track.path;
+
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isPlayingThis 
+                        ? PulseColors.accentPrimary.withValues(alpha: 0.08) 
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: isPlayingThis 
+                          ? PulseColors.accentPrimary.withValues(alpha: 0.3) 
+                          : Colors.transparent,
+                      width: 1,
+                    ),
+                  ),
+                  child: MediaCard(
+                    file: track,
+                    isGrid: false,
+                    isSelectionMode: _isSelectionMode.value,
+                    isSelected: _selectedItems.value.contains(track),
+                    onLongPress: () {
+                      if (!_isSelectionMode.value) {
+                        _isSelectionMode.value = true;
+                        _selectedItems.value = {track};
+                      } else {
+                        if (_selectedItems.value.contains(track)) {
+                          _selectedItems.value.remove(track);
+                          if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
+                        } else {
+                          _selectedItems.value.add(track);
+                        }
+                        _selectedItems.value = Set.from(_selectedItems.value);
+                      }
+                      setState(() {});
+                    },
+                    onTap: () {
+                      if (_isSelectionMode.value) {
+                        if (_selectedItems.value.contains(track)) {
+                          _selectedItems.value.remove(track);
+                          if (_selectedItems.value.isEmpty) _isSelectionMode.value = false;
+                        } else {
+                          _selectedItems.value.add(track);
+                        }
+                        _selectedItems.value = Set.from(_selectedItems.value);
+                        setState(() {});
+                      } else {
+                        _handleTrackTap(track, tracks);
+                      }
+                    },
+                  ),
+                )
+                    .animate()
+                    .fadeIn(duration: 200.ms, delay: (min(index, 10) * 25).ms)
+                    .slideX(begin: 0.04, end: 0, duration: 200.ms, curve: Curves.easeOutCubic);
+              },
+            );
           },
         );
       },
@@ -414,7 +500,7 @@ class _MusicTabState extends State<MusicTab> with SingleTickerProviderStateMixin
         crossAxisCount: 2,
         crossAxisSpacing: 16,
         mainAxisSpacing: 20,
-        childAspectRatio: 0.8,
+        childAspectRatio: 0.74,
       ),
       itemBuilder: (context, index) {
         final albumName = albums[index];

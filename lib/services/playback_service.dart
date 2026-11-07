@@ -8,10 +8,9 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:audio_service/audio_service.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:better_player_plus/better_player_plus.dart';
 import 'media_scanner.dart';
+import 'metadata_service.dart';
 import 'audio_focus_controller.dart';
 
 import '../models/media_file.dart';
@@ -21,6 +20,7 @@ import 'playlist_service.dart';
 import '../app.dart';
 import '../players/audio_player_screen.dart';
 import '../players/video_player_screen.dart';
+import '../players/desktop_video_player.dart';
 
 enum RepeatMode { off, all, one }
 
@@ -28,7 +28,7 @@ class PlaybackService {
   static final PlaybackService instance = PlaybackService._internal();
   PlaybackService._internal();
 
-  late AudioPlayer _audioPlayer;
+  final AudioPlayer _audioPlayer = AudioPlayer();
   
   // Declared nullable to prevent late initialization and dispose leaks
   StreamSubscription? _playerStateSubscription;
@@ -54,7 +54,6 @@ class PlaybackService {
 
   // Volume boost scale: 0.0 to 1.5. Synchronized across foreground/background sessions.
   final ValueNotifier<double> volumeScale = ValueNotifier<double>(1.0);
-  AndroidLoudnessEnhancer? _loudnessEnhancer;
 
   // Synchronization hooks for active video controller controls
   BetterPlayerController? activeVideoController;
@@ -121,21 +120,10 @@ class PlaybackService {
     final settingsBox = Hive.box('settings_box');
     await settingsBox.put('volume_scale', clamped);
 
-    // Apply to players
-    if (clamped <= 1.0) {
-      await _audioPlayer.setVolume(clamped);
-      if (Platform.isAndroid && _loudnessEnhancer != null) {
-        await _loudnessEnhancer!.setTargetGain(0.0);
-      }
-    } else {
-      // Scale above 100%: keep standard volume at 1.0, boost gain
-      await _audioPlayer.setVolume(1.0);
-      if (Platform.isAndroid && _loudnessEnhancer != null) {
-        // Map 1.0-1.5 linearly to 0.0-12.0 dB target gain
-        final gainDb = (clamped - 1.0) * 24.0; // 0.5 * 24 = 12 dB max
-        await _loudnessEnhancer!.setTargetGain(gainDb);
-      }
-    }
+    // Apply to audio player: 0.0 to 1.0 clamped for safe native audio pipeline
+    try {
+      await _audioPlayer.setVolume(clamped.clamp(0.0, 1.0));
+    } catch (_) {}
 
     // Sync to active video controller if present
     if (activeVideoController != null) {
@@ -175,26 +163,21 @@ class PlaybackService {
   // ---------------------------------------------------------------------------
   Future<void> init() async {
     await _cancelSubscriptions();
+    _stopHeartbeat();
+
+    // Safely stop any playback on re-initialisation
+    try {
+      if (_audioPlayer.playing) {
+        await _audioPlayer.stop();
+      }
+    } catch (e) {
+      debugPrint('[PlaybackService] Old audio player cleanup error: $e');
+    }
 
     // Load and apply saved preferences from Hive
     final settingsBox = Hive.box('settings_box');
-    final savedVolume = settingsBox.get('volume_scale', defaultValue: 1.0) as double;
+    final savedVolume = (settingsBox.get('volume_scale', defaultValue: 1.0) as num).toDouble();
     autoPlayNext.value = settingsBox.get('auto_play_next', defaultValue: true) as bool;
-
-    if (Platform.isAndroid) {
-      try {
-        _loudnessEnhancer = AndroidLoudnessEnhancer();
-        final pipeline = AudioPipeline(androidAudioEffects: [_loudnessEnhancer!]);
-        _audioPlayer = AudioPlayer(audioPipeline: pipeline);
-        await _loudnessEnhancer!.setEnabled(true);
-      } catch (e) {
-        debugPrint('[PlaybackService] AndroidLoudnessEnhancer not supported on this DSP: $e');
-        _loudnessEnhancer = null;
-        _audioPlayer = AudioPlayer();
-      }
-    } else {
-      _audioPlayer = AudioPlayer();
-    }
 
     // Register with AudioFocusController
     AudioFocusController.instance.registerPlayers(
@@ -288,13 +271,21 @@ class PlaybackService {
         _stopHeartbeat();
       }
       if (state.processingState == ProcessingState.completed) {
-        if (autoPlayNext.value && queue.value.isNotEmpty) {
-          debugPrint('[PlaybackService] Song completed. Auto-playing next track.');
-          next();
-        } else if (repeatMode.value == RepeatMode.off) {
+        if (repeatMode.value == RepeatMode.one) {
+          _audioPlayer.seek(Duration.zero);
+          _audioPlayer.play();
+        } else if (autoPlayNext.value && queue.value.isNotEmpty) {
+          final isLast = queueIndex.value >= queue.value.length - 1;
+          if (isLast && repeatMode.value == RepeatMode.off) {
+            isPlaying.value = false;
+            _audioPlayer.pause();
+            _audioPlayer.seek(Duration.zero, index: 0);
+          } else {
+            debugPrint('[PlaybackService] Song completed. Playing next track in playlist (loop: ${repeatMode.value}).');
+            next();
+          }
+        } else {
           isPlaying.value = false;
-          _audioPlayer.pause();
-          _audioPlayer.seek(Duration.zero, index: 0);
         }
       }
     });
@@ -335,7 +326,7 @@ class PlaybackService {
       position.value = pos;
       final track = currentTrack.value;
       if (track != null && pos.inSeconds > 3) {
-        _saveLastPlayed(track, pos);
+        saveLastPlayed(track, pos);
       }
     });
 
@@ -357,7 +348,7 @@ class PlaybackService {
     await settingsBox.put('auto_play_next', autoPlayNext.value);
   }
 
-  Future<void> _saveLastPlayed(MediaFile track, Duration pos) async {
+  Future<void> saveLastPlayed(MediaFile track, Duration pos) async {
     try {
       final box = Hive.box('settings_box');
       await box.put('last_played_path', track.path);
@@ -368,6 +359,7 @@ class PlaybackService {
       await box.put('last_played_is_video', track.isVideo);
       await box.put('last_played_duration_ms', track.duration.inMilliseconds);
       await box.put('last_played_timestamp', DateTime.now().millisecondsSinceEpoch);
+      await box.put('video_pos_${track.path}', pos.inMilliseconds);
     } catch (_) {}
   }
 
@@ -378,15 +370,18 @@ class PlaybackService {
   // ---------------------------------------------------------------------------
   // VIDEO NAVIGATION GUARD
   // ---------------------------------------------------------------------------
-  void navigateToVideo(List<MediaFile> videoQueue, MediaFile track) {
+  void navigateToVideo(List<MediaFile> videoQueue, MediaFile track, {Duration? initialPosition}) {
     if (_videoScreenOpen) return;
     _videoScreenOpen = true;
     final nav = navigatorKey.currentState;
     if (nav != null) {
+      final targetWidget = Platform.isWindows
+          ? DesktopVideoPlayerScreen(file: track, playlist: videoQueue, initialPosition: initialPosition)
+          : VideoPlayerScreen(file: track, playlist: videoQueue, initialPosition: initialPosition);
+
       nav.push(
         PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              VideoPlayerScreen(file: track, playlist: videoQueue),
+          pageBuilder: (context, animation, secondaryAnimation) => targetWidget,
           transitionsBuilder:
               (context, animation, secondaryAnimation, child) {
             final tween =
@@ -466,34 +461,27 @@ class PlaybackService {
     }));
 
     if (track.isVideo && !forceAudio) {
-      // Background notifications session sync:
-      // Load video in the background player with volume 0.0, and play it.
-      await _audioPlayer.setVolume(0.0);
-      if (Platform.isAndroid && _loudnessEnhancer != null) {
-        await _loudnessEnhancer!.setTargetGain(0.0);
-      }
-
-      isLoading.value = true;
+      currentTrack.value = track;
+      queueIndex.value = targetIndex;
+      // Pause background audio player so it does not collide with video audio sink
       try {
-        if (queueChanged || _playlist == null) {
-          await _updatePlaylist(targetIndex, initialPosition: startPosition, includeVideo: true);
-        } else {
-          await _audioPlayer.seek(startPosition ?? Duration.zero, index: targetIndex);
+        if (_audioPlayer.playing) {
+          _audioPlayer.pause();
         }
-        await _audioPlayer.play();
-      } catch (e) {
-        debugPrint('Error preparing background player for video: $e');
-      } finally {
-        isLoading.value = false;
-      }
+      } catch (_) {}
 
       final videoQueue = queue.value.where((f) => f.isVideo).toList();
-      navigateToVideo(videoQueue.isNotEmpty ? videoQueue : [track], track);
+      navigateToVideo(
+        videoQueue.isNotEmpty ? videoQueue : [track],
+        track,
+        initialPosition: startPosition,
+      );
       return;
     }
 
-    // Android file-accessibility check (quick run)
-    if (Platform.isAndroid) {
+    // Android file-accessibility check (skip for online network streams)
+    final isNetwork = track.path.startsWith('http://') || track.path.startsWith('https://') || track.path.startsWith('rtsp://');
+    if (Platform.isAndroid && !isNetwork) {
       final file = File(track.path);
       if (!await file.exists()) {
         scaffoldMessengerKey.currentState?.showSnackBar(SnackBar(
@@ -505,14 +493,16 @@ class PlaybackService {
     }
 
     isLoading.value = true;
+    currentTrack.value = track;
+    queueIndex.value = targetIndex;
     try {
       if (queueChanged || _playlist == null) {
-        await _updatePlaylist(targetIndex, initialPosition: startPosition, includeVideo: false);
+        await _updatePlaylist(targetIndex, initialPosition: startPosition, includeVideo: includeVideo || forceAudio);
       } else {
         await _audioPlayer.seek(startPosition ?? Duration.zero, index: targetIndex);
       }
       
-      // Apply correct boosted/regular volume levels
+      // Apply volume and playback speed
       await setVolumeScale(volumeScale.value);
       await _audioPlayer.setSpeed(playbackSpeed.value);
 
@@ -607,30 +597,10 @@ class PlaybackService {
     // Build audio sources for the new items
     final List<AudioSource> sources = [];
     for (final track in newItems) {
-      final file = File(track.path);
-      if (!await file.exists()) continue;
-
-      Uri? artUri;
-      if (track.albumArtPath != null &&
-          track.albumArtPath!.isNotEmpty) {
-        try {
-          final artFile = File(track.albumArtPath!);
-          if (artFile.existsSync()) {
-            artUri = Uri.file(track.albumArtPath!);
-          }
-        } catch (_) {}
+      final src = await _buildAudioSourceForTrack(track);
+      if (src != null) {
+        sources.add(src);
       }
-
-      sources.add(AudioSource.uri(
-        Uri.file(track.path),
-        tag: MediaItem(
-          id: track.path,
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          artUri: artUri,
-        ),
-      ));
     }
 
     if (sources.isNotEmpty) {
@@ -640,6 +610,90 @@ class PlaybackService {
 
     // Keep the queue notifier in sync
     queue.value = [...current, ...newItems];
+  }
+
+  /// Builds a [AudioSource] for an individual [MediaFile] with proper metadata tag and artwork.
+  Future<AudioSource?> _buildAudioSourceForTrack(MediaFile track) async {
+    final file = File(track.path);
+    final isNetwork = track.path.startsWith('http://') ||
+        track.path.startsWith('https://') ||
+        track.path.startsWith('rtsp://') ||
+        track.path.startsWith('content://');
+    if (!isNetwork && !await file.exists()) return null;
+
+    Uri? artUri;
+    if (track.albumArtPath != null && track.albumArtPath!.isNotEmpty) {
+      final path = track.albumArtPath!;
+      if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('content://')) {
+        artUri = Uri.parse(path);
+      } else {
+        try {
+          final artFile = File(path);
+          if (artFile.existsSync()) {
+            artUri = Uri.file(path);
+          }
+        } catch (_) {}
+      }
+    }
+
+    final uri = isNetwork ? Uri.parse(track.path) : Uri.file(track.path);
+
+    String displayTitle = MetadataService.instance.cleanTitle(track.title);
+    String displayArtist = track.artist;
+    if (track.isVideo) {
+      final durStr = track.duration > Duration.zero ? ' • ${track.durationString}' : '';
+      displayArtist = 'Video$durStr';
+    }
+
+    return AudioSource.uri(
+      uri,
+      tag: MediaItem(
+        id: track.path,
+        title: displayTitle,
+        artist: displayArtist,
+        album: track.isVideo ? 'Videos' : track.album,
+        artUri: artUri,
+        duration: track.duration > Duration.zero ? track.duration : null,
+      ),
+    );
+  }
+
+  /// Inserts [track] immediately after the currently active track in queue and playlist.
+  /// If nothing is currently playing, begins playing [track].
+  Future<void> playTrackNext(MediaFile track) async {
+    final current = List<MediaFile>.from(queue.value);
+    if (current.isEmpty || _playlist == null || currentTrack.value == null) {
+      await playTrack(track);
+      return;
+    }
+
+    final currentIndex = queueIndex.value;
+    final int insertIndex = (currentIndex >= 0 && currentIndex < current.length)
+        ? currentIndex + 1
+        : current.length;
+
+    // Remove existing occurrence if present to promote it to next
+    final existingIdx = current.indexWhere((t) => _isSamePath(t.path, track.path));
+    if (existingIdx != -1) {
+      if (existingIdx == currentIndex) return; // already actively playing
+      current.removeAt(existingIdx);
+      if (_playlist != null && existingIdx < _playlist!.length) {
+        await _playlist!.removeAt(existingIdx);
+      }
+    }
+
+    final effectiveInsertIndex = (existingIdx != -1 && existingIdx < insertIndex)
+        ? insertIndex - 1
+        : insertIndex;
+
+    final source = await _buildAudioSourceForTrack(track);
+    if (source != null && _playlist != null) {
+      final safeInsert = effectiveInsertIndex.clamp(0, _playlist!.length);
+      await _playlist!.insert(safeInsert, source);
+    }
+
+    current.insert(effectiveInsertIndex.clamp(0, current.length), track);
+    queue.value = current;
   }
 
   // ---------------------------------------------------------------------------
@@ -683,14 +737,33 @@ class PlaybackService {
     }
   }
 
+  void togglePlayPause() => togglePlay();
+
   void next() {
     if (isPlayingVideoOnScreen && onVideoNext != null) {
       onVideoNext!();
       return;
     }
     if (queue.value.isEmpty) return;
-    _playIndex((queueIndex.value + 1) % queue.value.length);
+
+    if (repeatMode.value == RepeatMode.one) {
+      _audioPlayer.seek(Duration.zero);
+      _audioPlayer.play();
+      return;
+    }
+
+    int nextIdx = queueIndex.value + 1;
+    if (nextIdx >= queue.value.length) {
+      if (repeatMode.value == RepeatMode.all) {
+        nextIdx = 0; // Loop playlist seamlessly from track 1
+      } else {
+        return; // Reached end of playlist with loop off
+      }
+    }
+    _playIndex(nextIdx);
   }
+
+  void playNext() => next();
 
   void previous() {
     if (isPlayingVideoOnScreen && onVideoPrevious != null) {
@@ -699,8 +772,22 @@ class PlaybackService {
     }
     if (queue.value.isEmpty) return;
     int newIdx = queueIndex.value - 1;
-    if (newIdx < 0) newIdx = queue.value.length - 1;
+    if (newIdx < 0) {
+      if (repeatMode.value == RepeatMode.all) {
+        newIdx = queue.value.length - 1;
+      } else {
+        newIdx = 0;
+      }
+    }
     _playIndex(newIdx);
+  }
+
+  void playPrevious() => previous();
+
+  Future<void> setPlaybackSpeed(double speed) async {
+    final clamped = speed.clamp(0.25, 3.0);
+    playbackSpeed.value = clamped;
+    await _audioPlayer.setSpeed(clamped);
   }
 
   void toggleShuffle() {
@@ -750,16 +837,28 @@ class PlaybackService {
     _sleepTimer?.cancel();
     if (seconds <= 0) {
       sleepSecondsRemaining.value = 0;
+      setVolumeScale(volumeScale.value);
       return;
     }
     sleepSecondsRemaining.value = seconds;
-    _sleepTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    final baseVolume = volumeScale.value;
+    const fadeDurationSec = 30;
+
+    _sleepTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       if (sleepSecondsRemaining.value <= 1) {
         timer.cancel();
-        _audioPlayer.pause();
+        await _audioPlayer.pause();
         sleepSecondsRemaining.value = 0;
+        // Restore volume baseline after stopping so next play is at full volume
+        await setVolumeScale(baseVolume);
       } else {
         sleepSecondsRemaining.value -= 1;
+        // Smooth audio fade out during last 30 seconds for gentle bedtime listening
+        if (sleepSecondsRemaining.value <= fadeDurationSec) {
+          final factor = (sleepSecondsRemaining.value / fadeDurationSec).clamp(0.0, 1.0);
+          final fadedVolume = (baseVolume * factor).clamp(0.0, 1.0);
+          await _audioPlayer.setVolume(fadedVolume);
+        }
       }
     });
   }
@@ -788,7 +887,7 @@ class PlaybackService {
 
   Future<void> _playIndex(int index) async {
     if (index < 0 || index >= queue.value.length) return;
-    await playTrack(queue.value[index], newQueue: queue.value);
+    await playTrack(queue.value[index], newQueue: queue.value, startPosition: Duration.zero);
   }
 
   Future<void> _updatePlaylist(int startIndex, {Duration? initialPosition, bool includeVideo = false}) async {
@@ -809,62 +908,64 @@ class PlaybackService {
       return;
     }
 
-    final targetTrack = filteredQueue[targetIndex];
-
     AudioSource buildSource(MediaFile track) {
       Uri? artUri;
       if (track.albumArtPath != null && track.albumArtPath!.isNotEmpty) {
         final path = track.albumArtPath!;
-        bool exists = _artExistsCache[path] ?? false;
-        if (!_artExistsCache.containsKey(path)) {
-          exists = File(path).existsSync();
-          _artExistsCache[path] = exists;
-        }
-        if (exists) {
-          artUri = Uri.file(path);
+        if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('content://')) {
+          artUri = Uri.parse(path);
+        } else {
+          bool exists = _artExistsCache[path] ?? false;
+          if (!_artExistsCache.containsKey(path)) {
+            try {
+              exists = File(path).existsSync();
+            } catch (_) {
+              exists = false;
+            }
+            _artExistsCache[path] = exists;
+          }
+          if (exists) {
+            try {
+              artUri = Uri.file(path);
+            } catch (_) {}
+          }
         }
       }
-      // Note: skip video thumbnail generation during background audio update to prevent blocking startup delay.
+
+      final isSpecial = track.path.startsWith('http://') ||
+          track.path.startsWith('https://') ||
+          track.path.startsWith('rtsp://') ||
+          track.path.startsWith('content://');
+      final uri = isSpecial ? Uri.parse(track.path) : Uri.file(track.path);
+
+      String displayTitle = MetadataService.instance.cleanTitle(track.title);
+      String displayArtist = track.artist;
+      if (track.isVideo) {
+        final durStr = track.duration > Duration.zero ? ' • ${track.durationString}' : '';
+        displayArtist = 'Video$durStr';
+      }
+
       return AudioSource.uri(
-        Uri.file(track.path),
+        uri,
         tag: MediaItem(
           id: track.path,
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
+          title: displayTitle,
+          artist: displayArtist,
+          album: track.isVideo ? 'Videos' : track.album,
           artUri: artUri,
+          duration: track.duration > Duration.zero ? track.duration : null,
         ),
       );
     }
 
-    final targetSource = buildSource(targetTrack);
-    _playlist = ConcatenatingAudioSource(children: [targetSource]);
+    final allSources = filteredQueue.map(buildSource).toList();
+    _playlist = ConcatenatingAudioSource(children: allSources);
 
-    await _audioPlayer.setAudioSource(_playlist!,
-        initialIndex: 0, initialPosition: initialPosition);
-
-    unawaited(Future(() async {
-      try {
-        final List<AudioSource> precedingSources = [];
-        for (int i = 0; i < targetIndex; i++) {
-          precedingSources.add(buildSource(filteredQueue[i]));
-        }
-
-        final List<AudioSource> followingSources = [];
-        for (int i = targetIndex + 1; i < filteredQueue.length; i++) {
-          followingSources.add(buildSource(filteredQueue[i]));
-        }
-
-        if (precedingSources.isNotEmpty) {
-          await _playlist!.insertAll(0, precedingSources);
-        }
-        if (followingSources.isNotEmpty) {
-          await _playlist!.addAll(followingSources);
-        }
-      } catch (e) {
-        debugPrint('Error asynchronously rebuilding background playlist queue: $e');
-      }
-    }));
+    await _audioPlayer.setAudioSource(
+      _playlist!,
+      initialIndex: targetIndex,
+      initialPosition: initialPosition,
+    );
   }
 
   // ---------------------------------------------------------------------------

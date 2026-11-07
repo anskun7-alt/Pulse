@@ -6,8 +6,11 @@ import '../services/playback_service.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../players/audio_player_screen.dart';
-import '../players/video_player_screen.dart';
 import 'video_thumbnail_widget.dart';
+import 'animated_like_button.dart';
+import 'interactive_elements.dart';
+import 'interactive_play_button.dart';
+import 'pulse_marquee.dart';
 
 class MiniPlayerBar extends StatelessWidget {
   const MiniPlayerBar({Key? key}) : super(key: key);
@@ -21,23 +24,18 @@ class MiniPlayerBar extends StatelessWidget {
       builder: (context, track, child) {
         if (track == null || playbackService.videoScreenOpen) return const SizedBox.shrink();
 
-        final bottomPad = MediaQuery.of(context).padding.bottom;
         return Padding(
-          padding: EdgeInsets.only(left: 20, right: 20, bottom: 8 + bottomPad),
+          padding: const EdgeInsets.only(left: 20, right: 20, bottom: 8),
           child: GestureDetector(
             onTap: () {
               if (track.isVideo) {
                 final currentPosition = playbackService.position.value;
                 playbackService.player.pause();
                 
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => VideoPlayerScreen(
-                      file: track,
-                      playlist: playbackService.queue.value,
-                      initialPosition: currentPosition,
-                    ),
-                  ),
+                PlaybackService.instance.navigateToVideo(
+                  playbackService.queue.value,
+                  track,
+                  initialPosition: currentPosition,
                 );
               } else {
                 if (PlaybackService.instance.audioScreenOpen) return;
@@ -130,23 +128,44 @@ class MiniPlayerBar extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Text(
-                                    track.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                  PulseMarqueeText(
+                                    text: track.title,
                                     style: PulseTypography.bodyLarge.copyWith(
                                       fontWeight: FontWeight.bold,
                                       letterSpacing: 0.2,
                                     ),
                                   ),
                                   const SizedBox(height: 2),
-                                  Text(
-                                    track.artist,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: PulseTypography.bodyMedium.copyWith(
-                                      color: Colors.white.withValues(alpha: 0.6),
-                                    ),
+                                  ValueListenableBuilder<bool>(
+                                    valueListenable: playbackService.isPlaying,
+                                    builder: (context, playing, _) {
+                                      final accentColor = track.isVideo
+                                          ? const Color(0xFF00E5FF)
+                                          : const Color(0xFFFF9100);
+                                      return Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (playing) ...[
+                                            PulseAnimatedEqualizer(
+                                              size: 13,
+                                              color: accentColor,
+                                              isPlaying: true,
+                                            ),
+                                            const SizedBox(width: 6),
+                                          ],
+                                          Flexible(
+                                            child: Text(
+                                              track.artist,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: PulseTypography.bodyMedium.copyWith(
+                                                color: Colors.white.withValues(alpha: 0.6),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                    },
                                   ),
                                 ],
                               ),
@@ -190,16 +209,14 @@ class MiniPlayerBar extends StatelessWidget {
                                                   ),
                                                 ),
                                               )
-                                            : _AnimatedTapScale(
-                                                onTap: () => playbackService.togglePlay(),
-                                                child: Icon(
-                                                  playing
-                                                      ? Icons.pause_circle_filled_rounded
-                                                      : Icons.play_circle_filled_rounded,
-                                                  color: accentColor,
-                                                  size: 44,
-                                                ),
-                                              ),
+                                            : PulseInteractivePlayButton(
+                                                 isPlaying: playing,
+                                                 onTap: () => playbackService.togglePlay(),
+                                                 size: 38,
+                                                 color: accentColor,
+                                                 iconColor: Colors.black,
+                                                 glowColor: accentColor,
+                                               ),
                                         const SizedBox(width: 4),
                                         // Next track
                                         _AnimatedTapScale(
@@ -212,6 +229,13 @@ class MiniPlayerBar extends StatelessWidget {
                                               size: 26,
                                             ),
                                           ),
+                                        ),
+                                        const SizedBox(width: 2),
+                                        // Quick Like button
+                                        AnimatedLikeButton(
+                                          track: track,
+                                          size: 22,
+                                          padding: const EdgeInsets.all(6.0),
                                         ),
                                         const SizedBox(width: 8),
                                       ],
@@ -305,6 +329,8 @@ class _AudioArtWidget extends StatelessWidget {
         File(artPath!),
         width: size,
         height: size,
+        cacheWidth: 120,
+        cacheHeight: 120,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) => _placeholder(),
       );

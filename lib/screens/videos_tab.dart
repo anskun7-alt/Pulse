@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_media_metadata/flutter_media_metadata.dart';
@@ -7,17 +8,21 @@ import 'package:hive/hive.dart';
 import '../models/media_file.dart';
 import '../providers/selection_provider.dart';
 import '../services/media_scanner.dart';
-import '../services/playlist_service.dart';
+import '../services/playback_service.dart';
+import '../theme/logo.dart';
 import 'video_folder_screen.dart';
 import '../widgets/media_card.dart';
 import '../widgets/context_bottom_sheet.dart';
 import '../widgets/action_toolbar.dart';
+import '../widgets/add_to_playlist_sheet.dart';
 import '../widgets/animated_widgets.dart';
 import '../widgets/continue_playing_card.dart';
-import '../players/video_player_screen.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../widgets/network_stream_dialog.dart';
+import 'downloads_screen.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../services/view_mode_service.dart';
 
 class VideoFolder {
   final String path;
@@ -35,17 +40,24 @@ class VideosTab extends StatefulWidget {
 }
 
 class _VideosTabState extends State<VideosTab> {
-  bool _isGrid = false;
   String _searchQuery = '';
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
 
   // Multi-select
   final SelectionProvider _selection = SelectionProvider();
 
   @override
+  void initState() {
+    super.initState();
+    ViewModeService.instance.init();
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     _selection.dispose();
     super.dispose();
   }
@@ -89,6 +101,24 @@ class _VideosTabState extends State<VideosTab> {
         _probingPaths.remove(video.path);
       }
     });
+  }
+
+  Future<void> _requestPermissionsAndScan() async {
+    if (Platform.isAndroid) {
+      final statuses = await [
+        Permission.videos,
+        Permission.audio,
+        Permission.storage,
+        Permission.photos,
+      ].request();
+      if (statuses.values.any((s) => s.isGranted)) {
+        await MediaScanner.instance.scan();
+      } else {
+        await openAppSettings();
+      }
+    } else {
+      await MediaScanner.instance.scan();
+    }
   }
 
   List<VideoFolder> _getFolders(List<MediaFile> files) {
@@ -140,39 +170,18 @@ class _VideosTabState extends State<VideosTab> {
         .toList();
     if (selectedFiles.isEmpty) return;
 
-    final playlists = PlaylistService.instance.playlists.value;
-
-    await showModalBottomSheet(
+    showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => _AddToPlaylistSheet(
-        playlists: playlists,
-        onChosen: (playlistId) async {
-          for (final file in selectedFiles) {
-            await PlaylistService.instance
-                .addToPlaylist(playlistId, file.path);
-          }
+      isScrollControlled: true,
+      builder: (context) => AddToPlaylistSheet.multiple(
+        mediaFiles: selectedFiles,
+        onAdded: (playlistId) {
           _selection.clear();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(
                   '${selectedFiles.length} video${selectedFiles.length == 1 ? '' : 's'} added to playlist'),
-              backgroundColor: PulseColors.success,
-            ));
-          }
-        },
-        onCreateNew: (name) async {
-          final pl =
-              await PlaylistService.instance.createPlaylist(name);
-          for (final file in selectedFiles) {
-            await PlaylistService.instance
-                .addToPlaylist(pl.id, file.path);
-          }
-          _selection.clear();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(
-                  '${selectedFiles.length} video${selectedFiles.length == 1 ? '' : 's'} added to "$name"'),
               backgroundColor: PulseColors.success,
             ));
           }
@@ -265,141 +274,225 @@ class _VideosTabState extends State<VideosTab> {
                       color: PulseColors.accentSecondary,
                       backgroundColor: PulseColors.surface,
                       onRefresh: () => scanner.scan(),
-                      child: CustomScrollView(
-                        slivers: [
-                          // ── Header ──────────────────────────────────────
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.only(
-                                  left: 20,
-                                  right: 20,
-                                  top: 20,
-                                  bottom: 10),
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      // Title / search field
-                                      if (!_isSearching)
-                                        Text('Videos',
-                                            style:
-                                                PulseTypography.displayLarge)
-                                      else
-                                        Expanded(
-                                          child: TextField(
-                                            controller: _searchController,
-                                            autofocus: true,
-                                            style:
-                                                PulseTypography.bodyLarge,
-                                            onChanged: (val) => setState(
-                                                () => _searchQuery = val),
-                                            decoration: InputDecoration(
-                                              hintText:
-                                                  'Search video files...',
-                                              hintStyle: PulseTypography
-                                                  .bodyMedium,
-                                              prefixIcon: Icon(
-                                                  Icons.search,
-                                                  color: PulseColors
-                                                      .textSecondary),
-                                              suffixIcon: IconButton(
-                                                icon: Icon(Icons.clear,
-                                                    color: PulseColors
-                                                        .textSecondary),
-                                                onPressed: () {
-                                                  _searchController.clear();
-                                                  setState(() {
-                                                    _searchQuery = '';
-                                                    _isSearching = false;
-                                                  });
-                                                },
+                      child: Listener(
+                        behavior: HitTestBehavior.translucent,
+                        onPointerSignal: (pointerSignal) {
+                          if (pointerSignal is PointerScrollEvent && _scrollController.hasClients) {
+                            final delta = pointerSignal.scrollDelta.dy * 2.5;
+                            final newOffset = (_scrollController.offset + delta).clamp(
+                              0.0,
+                              _scrollController.position.maxScrollExtent,
+                            );
+                            _scrollController.jumpTo(newOffset);
+                          }
+                        },
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: ViewModeService.instance.isGrid,
+                          builder: (context, isGrid, _) {
+                            return CustomScrollView(
+                              controller: _scrollController,
+                              physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                              slivers: [
+                                // ── Header ──────────────────────────────────────
+                                SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(
+                                        left: 20,
+                                        right: 20,
+                                        top: 20,
+                                        bottom: 10),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            // Title / search field
+                                            if (!_isSearching)
+                                              Row(
+                                                children: [
+                                                  PulseLogo.buildLogo(size: 32, borderRadius: BorderRadius.circular(16)),
+                                                  const SizedBox(width: 10),
+                                                  Text('Videos', style: PulseTypography.displayLarge),
+                                                ],
+                                              )
+                                            else
+                                              Expanded(
+                                                child: TextField(
+                                                  controller: _searchController,
+                                                  autofocus: true,
+                                                  style:
+                                                      PulseTypography.bodyLarge,
+                                                  onChanged: (val) => setState(
+                                                      () => _searchQuery = val),
+                                                  decoration: InputDecoration(
+                                                    hintText:
+                                                        'Search video files...',
+                                                    hintStyle: PulseTypography
+                                                        .bodyMedium,
+                                                    prefixIcon: Icon(
+                                                        Icons.search,
+                                                        color: PulseColors
+                                                            .textSecondary),
+                                                    suffixIcon: IconButton(
+                                                      icon: Icon(Icons.clear,
+                                                          color: PulseColors
+                                                              .textSecondary),
+                                                      onPressed: () {
+                                                        _searchController.clear();
+                                                        setState(() {
+                                                          _searchQuery = '';
+                                                          _isSearching = false;
+                                                        });
+                                                      },
+                                                    ),
+                                                    border: InputBorder.none,
+                                                  ),
+                                                ),
                                               ),
-                                              border: InputBorder.none,
-                                            ),
-                                          ),
-                                        ),
 
-                                      Row(
-                                        children: [
-                                          // Select All button (visible in selection mode)
-                                          if (isSelectionMode)
-                                            IconButton(
-                                              icon: const Icon(
-                                                  Icons.select_all_rounded,
-                                                  color: Colors.white),
-                                              tooltip: 'Select all',
-                                              onPressed: () =>
-                                                  _selection.selectAll(
-                                                      allVideos.map(
-                                                          (f) => f.path)),
+                                            Row(
+                                              children: [
+                                                // Select All button (visible in selection mode)
+                                                if (isSelectionMode)
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                        Icons.select_all_rounded,
+                                                        color: Colors.white),
+                                                    tooltip: 'Select all',
+                                                    onPressed: () =>
+                                                        _selection.selectAll(
+                                                            allVideos.map(
+                                                                (f) => f.path)),
+                                                  ),
+                                                if (!_isSearching && !isSelectionMode)
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                        Icons.cloud_download_rounded,
+                                                        color: Colors.white),
+                                                    tooltip: 'Downloads & Link Downloader',
+                                                    onPressed: () => Navigator.push(
+                                                      context,
+                                                      MaterialPageRoute(builder: (_) => const DownloadsScreen()),
+                                                    ),
+                                                  ),
+                                                if (!_isSearching && !isSelectionMode)
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                        Icons.stream_rounded,
+                                                        color: Colors.white),
+                                                    tooltip: 'Open Network Stream (Ctrl+N)',
+                                                    onPressed: () => NetworkStreamDialog.show(context),
+                                                  ),
+                                                if (!_isSearching && !isSelectionMode)
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                        Icons.search_rounded,
+                                                        color: Colors.white),
+                                                    onPressed: () => setState(
+                                                        () => _isSearching =
+                                                            true),
+                                                  ),
+                                                IconButton(
+                                                  icon: Icon(
+                                                    isGrid
+                                                        ? Icons.format_list_bulleted_rounded
+                                                        : Icons.grid_view_rounded,
+                                                    color: Colors.white,
+                                                  ),
+                                                  tooltip: isGrid ? 'Switch to List View' : 'Switch to Grid View',
+                                                  onPressed: () => ViewModeService.instance.toggleViewMode(),
+                                                ),
+                                              ],
                                             ),
-                                          if (!_isSearching && !isSelectionMode)
-                                            IconButton(
-                                              icon: const Icon(
-                                                  Icons.stream_rounded,
-                                                  color: Colors.white),
-                                              tooltip: 'Open Network Stream (Ctrl+N)',
-                                              onPressed: () => NetworkStreamDialog.show(context),
-                                            ),
-                                          if (!_isSearching && !isSelectionMode)
-                                            IconButton(
-                                              icon: const Icon(
-                                                  Icons.search_rounded,
-                                                  color: Colors.white),
-                                              onPressed: () => setState(
-                                                  () => _isSearching =
-                                                      true),
-                                            ),
-                                          IconButton(
-                                            icon: Icon(
-                                              _isGrid
-                                                  ? Icons
-                                                      .format_list_bulleted_rounded
-                                                  : Icons.grid_view_rounded,
-                                              color: Colors.white,
-                                            ),
-                                            onPressed: () => setState(
-                                                () => _isGrid = !_isGrid),
+                                          ],
+                                        ),
+                                        if (!_isSearching) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '${folders.length} folders · ${allVideos.length} videos',
+                                            style: PulseTypography.bodyMedium,
                                           ),
                                         ],
-                                      ),
-                                    ],
-                                  ),
-                                  if (!_isSearching) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${folders.length} folders · ${allVideos.length} videos',
-                                      style: PulseTypography.bodyMedium,
+                                      ],
                                     ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ),
-
-                          // ── Continue watching hero card ────────────────
-                          const SliverToBoxAdapter(
-                            child: ContinuePlayingCard(),
-                          ),
-
-                          // ── Empty state ─────────────────────────────────
-                          if (folders.isEmpty && allVideos.isEmpty)
-                            SliverFillRemaining(
-                              hasScrollBody: false,
-                              child: Center(
-                                child: Text(
-                                  _searchQuery.isNotEmpty
-                                      ? 'No matching videos.'
-                                      : 'No videos discovered.',
-                                  style: PulseTypography.bodyLarge,
+                                  ),
                                 ),
-                              ),
-                            )
-                          else if (_isGrid) ...[
+
+                                // ── Continue watching hero card ────────────────
+                                const SliverToBoxAdapter(
+                                  child: ContinuePlayingCard(),
+                                ),
+
+                                // ── Empty state ─────────────────────────────────
+                                if (folders.isEmpty && allVideos.isEmpty)
+                                  SliverFillRemaining(
+                                    hasScrollBody: false,
+                                    child: Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(32.0),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.video_library_rounded,
+                                              size: 64,
+                                              color: PulseColors.accentPrimary.withValues(alpha: 0.5),
+                                            ),
+                                            const SizedBox(height: 16),
+                                            Text(
+                                              _searchQuery.isNotEmpty
+                                                  ? 'No matching videos.'
+                                                  : 'No videos found.',
+                                              style: PulseTypography.displayMedium,
+                                              textAlign: TextAlign.center,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              _searchQuery.isNotEmpty
+                                                  ? 'Try searching with a different keyword.'
+                                                  : 'Tap scan below or add custom folders.',
+                                              style: PulseTypography.bodyMedium,
+                                              textAlign: TextAlign.center,
+                                            ),
+                                            const SizedBox(height: 24),
+                                            Wrap(
+                                              spacing: 12,
+                                              runSpacing: 12,
+                                              alignment: WrapAlignment.center,
+                                              children: [
+                                                ElevatedButton.icon(
+                                                  onPressed: () => scanner.scan(),
+                                                  icon: const Icon(Icons.refresh_rounded),
+                                                  label: const Text('Scan Device'),
+                                                  style: ElevatedButton.styleFrom(
+                                                    backgroundColor: PulseColors.accentPrimary,
+                                                    foregroundColor: Colors.white,
+                                                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                                  ),
+                                                ),
+                                                OutlinedButton.icon(
+                                                  onPressed: () => MediaScanner.instance.pickAndAddCustomFolder(),
+                                                  icon: const Icon(Icons.folder_open_rounded),
+                                                  label: const Text('Add Video Folder'),
+                                                  style: OutlinedButton.styleFrom(
+                                                    foregroundColor: Colors.white,
+                                                    side: const BorderSide(color: Colors.white24),
+                                                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                else if (isGrid) ...[
                             // ── Grid: folders ──────────────────────────────
                             if (folders.isNotEmpty) ...[
                               SliverToBoxAdapter(
@@ -428,11 +521,15 @@ class _VideosTabState extends State<VideosTab> {
                                     horizontal: 20),
                                 sliver: SliverGrid(
                                   gridDelegate:
-                                      const SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: 2,
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: MediaQuery.of(context).size.width >= 1400
+                                        ? 4
+                                        : (MediaQuery.of(context).size.width >= 900
+                                            ? 3
+                                            : (MediaQuery.of(context).size.width >= 600 ? 2 : 2)),
                                     crossAxisSpacing: 16,
                                     mainAxisSpacing: 16,
-                                    childAspectRatio: 1.4,
+                                    childAspectRatio: 1.5,
                                   ),
                                   delegate: SliverChildBuilderDelegate(
                                     (context, index) {
@@ -476,11 +573,17 @@ class _VideosTabState extends State<VideosTab> {
                                     horizontal: 20),
                                 sliver: SliverGrid(
                                   gridDelegate:
-                                      const SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: 2,
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: MediaQuery.of(context).size.width >= 1600
+                                        ? 6
+                                        : (MediaQuery.of(context).size.width >= 1200
+                                            ? 5
+                                            : (MediaQuery.of(context).size.width >= 900
+                                                ? 4
+                                                : (MediaQuery.of(context).size.width >= 600 ? 3 : 2))),
                                     crossAxisSpacing: 16,
                                     mainAxisSpacing: 16,
-                                    childAspectRatio: 0.82,
+                                    childAspectRatio: 0.84,
                                   ),
                                   delegate: SliverChildBuilderDelegate(
                                     (context, index) {
@@ -498,15 +601,7 @@ class _VideosTabState extends State<VideosTab> {
                                           if (isSelectionMode) {
                                             _selection.toggle(video.path);
                                           } else {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    VideoPlayerScreen(
-                                                  file: video,
-                                                  playlist: allVideos,
-                                                ),
-                                              ),
-                                            );
+                                            PlaybackService.instance.navigateToVideo(allVideos, video);
                                           }
                                         },
                                         onLongPress: () =>
@@ -523,7 +618,26 @@ class _VideosTabState extends State<VideosTab> {
                             ],
                           ] else ...[
                             // ── List: folders ──────────────────────────────
-                            if (folders.isNotEmpty)
+                            if (folders.isNotEmpty) ...[
+                              SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: const EdgeInsets.only(left: 20, right: 20, top: 16, bottom: 8),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text('Folders', style: PulseTypography.displayMedium),
+                                      Text(
+                                        '${folders.length} Folders',
+                                        style: TextStyle(
+                                          color: PulseColors.accentPrimary,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                               SliverList(
                                 delegate: SliverChildBuilderDelegate(
                                   (context, index) {
@@ -587,6 +701,7 @@ class _VideosTabState extends State<VideosTab> {
                                   childCount: folders.length,
                                 ),
                               ),
+                            ],
 
                             // ── List: videos header ─────────────────────────
                             if (allVideos.isNotEmpty)
@@ -625,15 +740,7 @@ class _VideosTabState extends State<VideosTab> {
                                           if (isSelectionMode) {
                                             _selection.toggle(video.path);
                                           } else {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    VideoPlayerScreen(
-                                                  file: video,
-                                                  playlist: allVideos,
-                                                ),
-                                              ),
-                                            );
+                                            PlaybackService.instance.navigateToVideo(allVideos, video);
                                           }
                                         },
                                         onLongPress: () =>
@@ -681,8 +788,11 @@ class _VideosTabState extends State<VideosTab> {
                                 height: isSelectionMode ? 200 : 160),
                           ),
                         ],
-                      ),
-                    ),
+                      );
+                    },
+                  ),
+                ),
+              ),
 
                     // ── Floating action toolbar ──────────────────────────
                     Positioned(
@@ -695,6 +805,13 @@ class _VideosTabState extends State<VideosTab> {
                             _handleAddToPlaylist(allVideos),
                         onMove: _handleMove,
                         onDelete: () => _handleDelete(allVideos),
+                        onPlaySelected: () {
+                          final selectedVideos = allVideos.where((v) => _selection.isSelected(v.path)).toList();
+                          if (selectedVideos.isNotEmpty) {
+                            _selection.clear();
+                            PlaybackService.instance.navigateToVideo(allVideos, selectedVideos.first);
+                          }
+                        },
                       ),
                     ),
                   ],
@@ -718,156 +835,93 @@ class _FolderCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: PulseColors.surfaceHigh.withValues(alpha: 0.7),
+        color: PulseColors.surfaceHigh.withValues(alpha: 0.75),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 1),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: const Color(0xFF8B5CF6).withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.folder_rounded,
-              size: 26,
-              color: Color(0xFFA78BFA),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  folder.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: PulseTypography.bodyLarge.copyWith(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${folder.videos.length} items',
-                  style: TextStyle(
-                    color: PulseColors.textSecondary,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.more_vert_rounded, size: 18, color: Colors.white54),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            onPressed: onMore,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Add-to-playlist bottom sheet ────────────────────────────────────────────
-class _AddToPlaylistSheet extends StatelessWidget {
-  final List<dynamic> playlists; // List<Playlist>
-  final Future<void> Function(String playlistId) onChosen;
-  final Future<void> Function(String name) onCreateNew;
-
-  const _AddToPlaylistSheet({
-    required this.playlists,
-    required this.onChosen,
-    required this.onCreateNew,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: PulseColors.surface.withOpacity(0.97),
-        borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border.all(color: const Color(0xFF1E1E30)),
-      ),
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2)),
-            ),
-          ),
-          const SizedBox(height: 20),
-          Text('Add to Playlist', style: PulseTypography.displayMedium),
-          const Divider(color: Colors.white10),
-          const SizedBox(height: 8),
-          ...playlists.map((p) => ListTile(
-                leading: const Icon(Icons.queue_music_rounded,
-                    color: Colors.white70),
-                title: Text(p.name, style: PulseTypography.bodyLarge),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await onChosen(p.id);
-                },
-              )),
-          ListTile(
-            leading: Icon(Icons.add_circle_outline_rounded,
-                color: PulseColors.accentSecondary),
-            title: Text('New playlist',
-                style: PulseTypography.bodyLarge
-                    .copyWith(color: PulseColors.accentSecondary)),
-            onTap: () async {
-              Navigator.pop(context);
-              final ctrl = TextEditingController();
-              final name = await showDialog<String>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  backgroundColor: PulseColors.surface,
-                  title: Text('New Playlist',
-                      style: PulseTypography.displayMedium),
-                  content: TextField(
-                    controller: ctrl,
-                    autofocus: true,
-                    style: PulseTypography.bodyLarge,
-                    decoration: InputDecoration(
-                      hintText: 'Playlist name',
-                      hintStyle: PulseTypography.bodyMedium,
-                    ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text('Cancel',
-                            style: PulseTypography.bodyLarge)),
-                    ElevatedButton(
-                      onPressed: () =>
-                          Navigator.pop(ctx, ctrl.text.trim()),
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              PulseColors.accentSecondary),
-                      child: const Text('Create'),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF8B5CF6).withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-              );
-              if (name != null && name.isNotEmpty) {
-                await onCreateNew(name);
-              }
-            },
+                child: const Icon(
+                  Icons.folder_rounded,
+                  size: 20,
+                  color: Colors.white,
+                ),
+              ),
+              if (onMore != null)
+                IconButton(
+                  icon: const Icon(Icons.more_vert_rounded, size: 18, color: Colors.white54),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  onPressed: onMore,
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8B5CF6).withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${folder.videos.length}',
+                    style: const TextStyle(
+                      color: Color(0xFFA78BFA),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                folder.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: PulseTypography.bodyLarge.copyWith(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13.5,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                '${folder.videos.length} ${folder.videos.length == 1 ? "video" : "videos"}',
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: PulseColors.textSecondary,
+                  fontSize: 11,
+                ),
+              ),
+            ],
           ),
         ],
       ),

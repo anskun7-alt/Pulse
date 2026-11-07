@@ -2,7 +2,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../services/playback_service.dart';
 import '../services/color_service.dart';
-import '../theme/colors.dart';
 
 class VisualizerWidget extends StatefulWidget {
   final String style; // 'Bars' | 'Wave' | 'Circle' | 'Off'
@@ -28,18 +27,26 @@ class _VisualizerWidgetState extends State<VisualizerWidget> with SingleTickerPr
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2000),
-    )..repeat();
+    );
 
     // Pause/Play visualizer based on player state
     PlaybackService.instance.isPlaying.addListener(_handlePlayState);
     _handlePlayState();
   }
 
+  @override
+  void didUpdateWidget(covariant VisualizerWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.style != widget.style) {
+      _handlePlayState();
+    }
+  }
+
   void _handlePlayState() {
-    if (PlaybackService.instance.isPlaying.value) {
+    if (widget.style != 'Off' && PlaybackService.instance.isPlaying.value) {
       if (!_controller.isAnimating) _controller.repeat();
     } else {
-      _controller.stop();
+      if (_controller.isAnimating) _controller.stop();
     }
   }
 

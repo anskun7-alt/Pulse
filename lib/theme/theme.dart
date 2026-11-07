@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'colors.dart';
 import 'typography.dart';
+import 'design_system.dart';
+
+export 'design_system.dart';
 
 class PulseTheme {
   static ThemeData get theme {
@@ -29,7 +32,7 @@ class PulseTheme {
         color: PulseColors.surface,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: PulseRadius.lg, // 16px (Table of 4)
           side: BorderSide(
             color: isLight 
                 ? PulseColors.surfaceHigh.withValues(alpha: 0.8) 
@@ -38,12 +41,26 @@ class PulseTheme {
           ),
         ),
       ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: PulseColors.surface,
+        elevation: 0,
+        shape: const RoundedRectangleBorder(
+          borderRadius: PulseRadius.xxl, // 24px (Table of 4)
+        ),
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: PulseColors.surface,
+        elevation: 0,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(PulseRadius.r24)),
+        ),
+      ),
       sliderTheme: SliderThemeData(
         activeTrackColor: PulseColors.accentPrimary,
         inactiveTrackColor: PulseColors.surfaceHigh,
         thumbColor: PulseColors.accentPrimary,
         overlayColor: PulseColors.accentPrimary.withValues(alpha: 0.15),
-        trackHeight: 4,
+        trackHeight: PulseSpacing.xxxs, // 4px (Table of 4)
         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
         overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
       ),

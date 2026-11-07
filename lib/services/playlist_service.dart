@@ -33,6 +33,18 @@ class PlaylistService {
     await _safeOpenBox('recent_box', (b) => _recentBox = b);
     await _safeOpenBox('play_count_box', (b) => _playCountBox = b);
     
+    // Automatically purge all temporary session playlists from prior app runs
+    final tempKeys = <dynamic>[];
+    for (var key in _playlistBox.keys) {
+      final map = _playlistBox.get(key);
+      if (map is Map && map['isTemporary'] == true) {
+        tempKeys.add(key);
+      }
+    }
+    for (var key in tempKeys) {
+      await _playlistBox.delete(key);
+    }
+
     _loadPlaylists();
   }
 
@@ -47,15 +59,22 @@ class PlaylistService {
     playlists.value = list;
   }
 
+  List<Playlist> get permanentPlaylists => playlists.value.where((p) => !p.isTemporary).toList();
+  List<Playlist> get temporaryPlaylists => playlists.value.where((p) => p.isTemporary).toList();
+
   // Favorites management
   Future<void> toggleFavorite(MediaFile file, Box mediaBox) async {
-    final updated = file.copyWith(isFavorite: !file.isFavorite);
+    final normalizedFilePath = _normalizePath(file.path);
+    final currentlyFavorite = favorites.value.map(_normalizePath).contains(normalizedFilePath);
+    final nextFavoriteState = !currentlyFavorite;
+
+    final updated = file.copyWith(isFavorite: nextFavoriteState);
     await mediaBox.put(file.path, updated.toMap());
 
     // Update in media scanner
     try {
       final scannerFiles = List<MediaFile>.from(MediaScanner.instance.allFiles.value);
-      final idx = scannerFiles.indexWhere((f) => _normalizePath(f.path) == _normalizePath(file.path));
+      final idx = scannerFiles.indexWhere((f) => _normalizePath(f.path) == normalizedFilePath);
       if (idx != -1) {
         scannerFiles[idx] = updated;
         MediaScanner.instance.allFiles.value = scannerFiles;
@@ -66,14 +85,13 @@ class PlaylistService {
     try {
       final playbackService = PlaybackService.instance;
       if (playbackService.currentTrack.value != null &&
-          _normalizePath(playbackService.currentTrack.value!.path) == _normalizePath(file.path)) {
+          _normalizePath(playbackService.currentTrack.value!.path) == normalizedFilePath) {
         playbackService.currentTrack.value = updated;
       }
     } catch (_) {}
     
     final currentFavs = List<String>.from(favorites.value);
-    final normalizedFilePath = _normalizePath(file.path);
-    if (updated.isFavorite) {
+    if (nextFavoriteState) {
       if (!currentFavs.map(_normalizePath).contains(normalizedFilePath)) {
         currentFavs.add(file.path);
       }
@@ -88,12 +106,14 @@ class PlaylistService {
   }
 
   // Playlists management
-  Future<Playlist> createPlaylist(String name) async {
+  Future<Playlist> createPlaylist(String name, {bool isTemporary = false, String? coverImagePath}) async {
     final newPlaylist = Playlist(
       id: const Uuid().v4(),
       name: name,
       mediaIds: [],
       createdDate: DateTime.now(),
+      isTemporary: isTemporary,
+      coverImagePath: coverImagePath,
     );
     await _playlistBox.put(newPlaylist.id, newPlaylist.toMap());
     _loadPlaylists();
@@ -114,12 +134,45 @@ class PlaylistService {
     }
   }
 
+  Future<void> updatePlaylistCover(String playlistId, String? coverImagePath) async {
+    final map = _playlistBox.get(playlistId);
+    if (map != null) {
+      final p = Playlist.fromMap(map).copyWith(coverImagePath: coverImagePath);
+      await _playlistBox.put(playlistId, p.toMap());
+      _loadPlaylists();
+    }
+  }
+
   Future<void> addToPlaylist(String playlistId, String mediaPath) async {
     final map = _playlistBox.get(playlistId);
     if (map != null) {
       final p = Playlist.fromMap(map);
-      if (!p.mediaIds.contains(mediaPath)) {
+      final normalizedTarget = _normalizePath(mediaPath);
+      if (!p.mediaIds.any((id) => _normalizePath(id) == normalizedTarget)) {
         final updatedIds = List<String>.from(p.mediaIds)..add(mediaPath);
+        await _playlistBox.put(playlistId, p.copyWith(mediaIds: updatedIds).toMap());
+        _loadPlaylists();
+      }
+    }
+  }
+
+  Future<void> addMultipleToPlaylist(String playlistId, List<String> mediaPaths) async {
+    final map = _playlistBox.get(playlistId);
+    if (map != null) {
+      final p = Playlist.fromMap(map);
+      final updatedIds = List<String>.from(p.mediaIds);
+      final existingNormalized = updatedIds.map(_normalizePath).toSet();
+
+      bool changed = false;
+      for (final path in mediaPaths) {
+        if (!existingNormalized.contains(_normalizePath(path))) {
+          updatedIds.add(path);
+          existingNormalized.add(_normalizePath(path));
+          changed = true;
+        }
+      }
+
+      if (changed) {
         await _playlistBox.put(playlistId, p.copyWith(mediaIds: updatedIds).toMap());
         _loadPlaylists();
       }
@@ -130,7 +183,9 @@ class PlaylistService {
     final map = _playlistBox.get(playlistId);
     if (map != null) {
       final p = Playlist.fromMap(map);
-      final updatedIds = List<String>.from(p.mediaIds)..remove(mediaPath);
+      final normalizedTarget = _normalizePath(mediaPath);
+      final updatedIds = List<String>.from(p.mediaIds)
+        ..removeWhere((id) => _normalizePath(id) == normalizedTarget);
       await _playlistBox.put(playlistId, p.copyWith(mediaIds: updatedIds).toMap());
       _loadPlaylists();
     }

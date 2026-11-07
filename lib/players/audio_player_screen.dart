@@ -1,15 +1,19 @@
 import 'dart:io';
 import 'dart:ui';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'dart:math' as math;
 import '../models/media_file.dart';
 import '../services/playback_service.dart';
 import '../services/color_service.dart';
-import '../services/playlist_service.dart';
 import '../widgets/visualizer_widget.dart';
 import '../widgets/lyrics_view.dart';
 import '../widgets/equalizer_screen.dart';
 import '../widgets/queue_sheet.dart';
+import '../widgets/context_bottom_sheet.dart';
+import '../widgets/animated_like_button.dart';
+import '../widgets/interactive_play_button.dart';
+import '../widgets/pulse_marquee.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import 'package:hive/hive.dart';
@@ -33,6 +37,7 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
 
   String _visualizerStyle = 'Bars';
   bool _isDragging = false;
+  double _dragMs = 0.0;
 
   @override
   void initState() {
@@ -200,11 +205,8 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        Navigator.of(context).pop();
-        return false;
-      },
+    return PopScope(
+      canPop: true,
       child: ValueListenableBuilder<MediaFile?>(
         valueListenable: _playback.currentTrack,
         builder: (context, track, child) {
@@ -224,9 +226,41 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
             builder: (context, accentColor, child) {
               return Scaffold(
                 backgroundColor: PulseColors.background,
-                body: Stack(
-                  fit: StackFit.expand,
-                  children: [
+                body: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerSignal: (pointerSignal) {
+                    if (pointerSignal is PointerScrollEvent) {
+                      if (pointerSignal.scrollDelta.dy.abs() > pointerSignal.scrollDelta.dx.abs()) {
+                        // Vertical scroll: adjust volume by 5%
+                        final currentVol = _playback.player.volume;
+                        final delta = pointerSignal.scrollDelta.dy < 0 ? 0.05 : -0.05;
+                        _playback.player.setVolume((currentVol + delta).clamp(0.0, 1.0));
+                      } else if (pointerSignal.scrollDelta.dx.abs() > 0) {
+                        // Horizontal scroll: seek +/- 5 seconds
+                        final currentPos = _playback.position.value;
+                        final delta = pointerSignal.scrollDelta.dx > 0
+                            ? const Duration(seconds: 5)
+                            : const Duration(seconds: -5);
+                        _playback.player.seek(currentPos + delta);
+                      }
+                    }
+                  },
+                  onPointerPanZoomUpdate: (event) {
+                    if (event.pan.dy.abs() > event.pan.dx.abs() && event.pan.dy.abs() > 1.0) {
+                      final currentVol = _playback.player.volume;
+                      final delta = event.pan.dy < 0 ? 0.05 : -0.05;
+                      _playback.player.setVolume((currentVol + delta).clamp(0.0, 1.0));
+                    } else if (event.pan.dx.abs() > 1.0) {
+                      final currentPos = _playback.position.value;
+                      final delta = event.pan.dx > 0
+                          ? const Duration(seconds: 5)
+                          : const Duration(seconds: -5);
+                      _playback.player.seek(currentPos + delta);
+                    }
+                  },
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
                     // Dynamic color mesh background
                     Positioned.fill(
                       child: _AnimatedMeshBackground(baseColor: accentColor),
@@ -254,7 +288,13 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                   style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold),
                                 ),
                                 _AnimatedTapScale(
-                                  onTap: () {},
+                                  onTap: () {
+                                    showModalBottomSheet(
+                                      context: context,
+                                      backgroundColor: Colors.transparent,
+                                      builder: (_) => ContextBottomSheet(file: track),
+                                    );
+                                  },
                                   child: const Padding(
                                     padding: EdgeInsets.all(8.0),
                                     child: Icon(Icons.more_vert_rounded, color: Colors.white),
@@ -359,10 +399,8 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        track.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                      PulseMarqueeText(
+                                        text: track.title,
                                         style: PulseTypography.displayLarge,
                                       ),
                                       const SizedBox(height: 4),
@@ -375,25 +413,9 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                     ],
                                   ),
                                 ),
-                                ValueListenableBuilder<List<String>>(
-                                  valueListenable: PlaylistService.instance.favorites,
-                                  builder: (context, favs, child) {
-                                    final isFav = favs.contains(track.path);
-                                    return _AnimatedTapScale(
-                                      onTap: () async {
-                                        final box = await Hive.openBox('media_files_box');
-                                        await PlaylistService.instance.toggleFavorite(track, box);
-                                      },
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: Icon(
-                                          isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                                          color: isFav ? Colors.redAccent : Colors.white,
-                                          size: 28,
-                                        ),
-                                      ),
-                                    );
-                                  },
+                                AnimatedLikeButton(
+                                  track: track,
+                                  size: 28,
                                 ),
                               ],
                             ),
@@ -415,44 +437,70 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                         final currentMs = pos.inMilliseconds.toDouble();
                                         return Column(
                                           children: [
-                                            SliderTheme(
-                                              data: SliderTheme.of(context).copyWith(
-                                                activeTrackColor: accentColor,
-                                                inactiveTrackColor: Colors.white.withValues(alpha: 0.15),
-                                                valueIndicatorColor: accentColor,
-                                                thumbColor: Colors.white,
-                                                trackHeight: _isDragging ? 6.0 : 4.0,
-                                                thumbShape: RoundSliderThumbShape(
-                                                  enabledThumbRadius: _isDragging ? 10.0 : 6.0,
-                                                  elevation: _isDragging ? 8.0 : 2.0,
+                                            Listener(
+                                              // VLC-style audio seek bar mouse wheel & trackpad scroll
+                                              onPointerSignal: (pointerSignal) {
+                                                if (pointerSignal is PointerScrollEvent) {
+                                                  final forward = pointerSignal.scrollDelta.dy < 0 || pointerSignal.scrollDelta.dx > 0;
+                                                  final delta = forward ? const Duration(seconds: 5) : const Duration(seconds: -5);
+                                                  _playback.player.seek(pos + delta);
+                                                }
+                                              },
+                                              onPointerPanZoomUpdate: (event) {
+                                                if (event.pan.dy.abs() > 1.0 || event.pan.dx.abs() > 1.0) {
+                                                  final forward = event.pan.dy < 0 || event.pan.dx > 0;
+                                                  final delta = forward ? const Duration(seconds: 5) : const Duration(seconds: -5);
+                                                  _playback.player.seek(pos + delta);
+                                                }
+                                              },
+                                              child: SliderTheme(
+                                                data: SliderTheme.of(context).copyWith(
+                                                  activeTrackColor: accentColor,
+                                                  inactiveTrackColor: Colors.white.withValues(alpha: 0.15),
+                                                  valueIndicatorColor: accentColor,
+                                                  thumbColor: Colors.white,
+                                                  trackHeight: _isDragging ? 6.0 : 4.0,
+                                                  thumbShape: RoundSliderThumbShape(
+                                                    enabledThumbRadius: _isDragging ? 10.0 : 6.0,
+                                                    elevation: _isDragging ? 8.0 : 2.0,
+                                                  ),
+                                                  overlayColor: accentColor.withValues(alpha: 0.2),
+                                                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 20.0),
                                                 ),
-                                                overlayColor: accentColor.withValues(alpha: 0.2),
-                                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 20.0),
-                                              ),
-                                              child: Slider(
-                                                value: currentMs.clamp(0.0, totalMs),
-                                                min: 0.0,
-                                                max: totalMs > 0.0 ? totalMs : 1.0,
-                                                onChangeStart: (_) {
-                                                  setState(() {
-                                                    _isDragging = true;
-                                                  });
-                                                },
-                                                onChangeEnd: (_) {
-                                                  setState(() {
-                                                    _isDragging = false;
-                                                  });
-                                                },
-                                                onChanged: (val) {
-                                                  _playback.seek(Duration(milliseconds: val.round()));
-                                                },
+                                                child: Slider(
+                                                  value: _isDragging
+                                                      ? _dragMs.clamp(0.0, totalMs > 0.0 ? totalMs : 1.0)
+                                                      : currentMs.clamp(0.0, totalMs > 0.0 ? totalMs : 1.0),
+                                                  min: 0.0,
+                                                  max: totalMs > 0.0 ? totalMs : 1.0,
+                                                  onChangeStart: (val) {
+                                                    setState(() {
+                                                      _isDragging = true;
+                                                      _dragMs = val;
+                                                    });
+                                                  },
+                                                  onChanged: (val) {
+                                                    setState(() {
+                                                      _dragMs = val;
+                                                    });
+                                                  },
+                                                  onChangeEnd: (val) {
+                                                    _playback.seek(Duration(milliseconds: val.round()));
+                                                    setState(() {
+                                                      _isDragging = false;
+                                                    });
+                                                  },
+                                                ),
                                               ),
                                             ),
                                             const SizedBox(height: 4),
                                             Row(
                                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                               children: [
-                                                Text(_formatDuration(pos), style: PulseTypography.monoLabel.copyWith(color: Colors.white70)),
+                                                Text(
+                                                  _formatDuration(_isDragging ? Duration(milliseconds: _dragMs.round()) : pos),
+                                                  style: PulseTypography.monoLabel.copyWith(color: Colors.white70),
+                                                ),
                                                 Text(_formatDuration(displayDur), style: PulseTypography.monoLabel.copyWith(color: Colors.white70)),
                                               ],
                                             )
@@ -589,28 +637,13 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                                     ValueListenableBuilder<bool>(
                                       valueListenable: _playback.isPlaying,
                                       builder: (context, playing, child) {
-                                        return _AnimatedTapScale(
+                                        return PulseInteractivePlayButton(
+                                          isPlaying: playing,
                                           onTap: () => _playback.togglePlay(),
-                                          child: Container(
-                                            width: 68,
-                                            height: 68,
-                                            decoration: BoxDecoration(
-                                              color: accentColor,
-                                              shape: BoxShape.circle,
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: accentColor.withValues(alpha: 0.4),
-                                                  blurRadius: 16,
-                                                  spreadRadius: 2,
-                                                ),
-                                              ],
-                                            ),
-                                            child: Icon(
-                                              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                                              color: Colors.black,
-                                              size: 40,
-                                            ),
-                                          ),
+                                          size: 68,
+                                          color: accentColor,
+                                          iconColor: Colors.black,
+                                          glowColor: accentColor,
                                         );
                                       },
                                     ),
@@ -742,7 +775,8 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> with TickerProvid
                     ),
                   ],
                 ),
-              );
+              ),
+            );
             },
           );
         },
@@ -765,10 +799,13 @@ class _AudioArtWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (artPath != null && artPath!.isNotEmpty) {
+      final cacheDim = (size * 1.5).round().clamp(120, 600);
       return Image.file(
         File(artPath!),
         width: size,
         height: size,
+        cacheWidth: cacheDim,
+        cacheHeight: cacheDim,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) => _placeholder(),
       );

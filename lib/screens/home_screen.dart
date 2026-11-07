@@ -12,6 +12,7 @@ import 'package:hive/hive.dart';
 import '../services/media_scanner.dart';
 import '../services/update_service.dart';
 import '../services/shortcuts_service.dart';
+import '../services/playback_service.dart';
 import '../widgets/network_stream_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -21,17 +22,54 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
   DateTime? _lastBackPressTime;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Scan library automatically on launch
     WidgetsBinding.instance.addPostFrameCallback((_) {
       MediaScanner.instance.scan();
       _checkAutoUpdate();
+      _initAndroidIntentListener();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // If user came back after granting permissions in Settings or system dialog, auto-scan immediately
+      if (MediaScanner.instance.allFiles.value.isEmpty && !MediaScanner.instance.isScanning.value) {
+        MediaScanner.instance.scan();
+      }
+    }
+  }
+
+  void _initAndroidIntentListener() {
+    const channel = MethodChannel('com.pulse.player/media_intent');
+    channel.setMethodCallHandler((call) async {
+      if (call.method == 'onNewFile') {
+        final path = call.arguments as String?;
+        if (path != null && path.isNotEmpty) {
+          try {
+            final mediaFile = await MediaScanner.instance.scanFile(path);
+            if (mediaFile != null) {
+              await PlaybackService.instance.playTrack(mediaFile, newQueue: [mediaFile]);
+            }
+          } catch (e) {
+            debugPrint('Error handling incoming file: $e');
+          }
+        }
+      }
     });
   }
 

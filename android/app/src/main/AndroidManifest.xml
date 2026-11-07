@@ -21,8 +21,16 @@
     android:icon="@mipmap/launcher_icon"
     android:usesCleartextTraffic="true">
 
+    <!-- Notification icon and brand tint color -->
+    <meta-data
+        android:name="com.google.firebase.messaging.default_notification_icon"
+        android:resource="@drawable/ic_notification" />
+    <meta-data
+        android:name="com.google.firebase.messaging.default_notification_color"
+        android:resource="@color/notification_color" />
+
     <activity
-      android:name="com.ryanheise.audioservice.AudioServiceActivity"
+      android:name="com.pulse.player.MainActivity"
       android:exported="true"
       android:supportsPictureInPicture="true"
       android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden|keyboard"
@@ -30,13 +38,18 @@
       android:theme="@style/LaunchTheme"
       android:hardwareAccelerated="true">
 
+      <meta-data
+        android:name="io.flutter.embedding.android.NormalTheme"
+        android:resource="@style/NormalTheme"
+        />
+
       <!-- Launcher -->
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
 
-      <!-- Video Intent -->
+      <!-- Video VIEW Intent with MIME and schemes -->
       <intent-filter>
         <action android:name="android.intent.action.VIEW" />
         <category android:name="android.intent.category.DEFAULT" />
@@ -44,7 +57,17 @@
         <data android:mimeType="video/*" />
       </intent-filter>
 
-      <!-- Audio Intent -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="file" android:mimeType="video/*" />
+        <data android:scheme="content" android:mimeType="video/*" />
+        <data android:scheme="http" android:mimeType="video/*" />
+        <data android:scheme="https" android:mimeType="video/*" />
+      </intent-filter>
+
+      <!-- Audio VIEW Intent with MIME and schemes -->
       <intent-filter>
         <action android:name="android.intent.action.VIEW" />
         <category android:name="android.intent.category.DEFAULT" />
@@ -52,14 +75,27 @@
         <data android:mimeType="audio/*" />
       </intent-filter>
 
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="file" android:mimeType="audio/*" />
+        <data android:scheme="content" android:mimeType="audio/*" />
+        <data android:scheme="http" android:mimeType="audio/*" />
+        <data android:scheme="https" android:mimeType="audio/*" />
+      </intent-filter>
+
+      <!-- SEND / Share Intent from other apps -->
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="audio/*" />
+      </intent-filter>
+
     </activity>
 
-    <!--
-      Background audio foreground service.
-      FIX: Channel id 'com.pulse.audio_playback' must match the id passed to
-      JustAudioBackground.init() in PlaybackService.init() — previously it was
-      'better_player_media' which collided with better_player_plus's own channel.
-    -->
+    <!-- Background audio foreground service -->
     <service
       android:name="com.ryanheise.audioservice.AudioService"
       android:foregroundServiceType="mediaPlayback"

@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/media_file.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import 'video_thumbnail_widget.dart';
+import 'interactive_elements.dart';
+import 'custom_toast.dart';
 import '../services/playback_service.dart';
 
 class MediaCard extends StatelessWidget {
@@ -43,10 +46,9 @@ class MediaCard extends StatelessWidget {
         final isCurrent = currentTrack?.path == file.path;
         final accentColor = file.isVideo ? const Color(0xFF00E5FF) : const Color(0xFFFF9100);
 
-        return GestureDetector(
+        return PulseQuickHold(
           onTap: onTap,
-          onLongPress: onLongPress,
-          behavior: HitTestBehavior.opaque,
+          onHold: onLongPress,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -253,11 +255,9 @@ class MediaCard extends StatelessWidget {
       builder: (context, currentTrack, _) {
         final isCurrent = currentTrack?.path == file.path;
         final accentColor = file.isVideo ? const Color(0xFF00E5FF) : const Color(0xFFFF9100);
-
-        return InkWell(
+        final card = PulseQuickHold(
           onTap: onTap,
-          onLongPress: onLongPress,
-          borderRadius: BorderRadius.circular(20),
+          onHold: onLongPress,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             decoration: BoxDecoration(
@@ -416,42 +416,99 @@ class MediaCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 8),
 
-                  // Context More Menu Button
-                  if (onMore != null)
-                    IconButton(
-                      icon: const Icon(Icons.more_vert_rounded, size: 20, color: Colors.white60),
-                      onPressed: onMore,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    )
-                  else if (!file.isVideo)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
+                  // Trailing Actions & Duration Column
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        file.durationString,
+                        style: PulseTypography.monoLabel.copyWith(
+                          color: isCurrent ? accentColor : PulseColors.textSecondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      if (onMore != null)
+                        InkWell(
+                          onTap: onMore,
+                          borderRadius: BorderRadius.circular(16),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4.0),
+                            child: Icon(Icons.more_vert_rounded, size: 18, color: Colors.white54),
+                          ),
+                        )
+                      else if (!file.isVideo && file.isFavorite)
+                        const Icon(Icons.favorite_rounded, color: Colors.redAccent, size: 14)
+                      else
                         Text(
-                          file.durationString,
+                          file.sizeString,
                           style: PulseTypography.monoLabel.copyWith(
-                            color: isCurrent ? accentColor : PulseColors.textPrimary,
+                            color: Colors.white.withValues(alpha: 0.35),
+                            fontSize: 10,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        if (file.isFavorite)
-                          const Icon(Icons.favorite_rounded, color: Colors.redAccent, size: 14)
-                        else
-                          Text(
-                            file.sizeString,
-                            style: PulseTypography.monoLabel.copyWith(
-                              color: Colors.white.withValues(alpha: 0.4),
-                            ),
-                          ),
-                      ],
-                    ),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
+        );
+
+        if (isSelectionMode) return card;
+
+        return Dismissible(
+          key: ValueKey('swipe_play_next_${file.path}'),
+          direction: DismissDirection.startToEnd,
+          confirmDismiss: (direction) async {
+            HapticFeedback.mediumImpact();
+            await PlaybackService.instance.playTrackNext(file);
+            if (context.mounted) {
+              CustomToast.show(
+                context,
+                message: 'Playing next: ${file.title}',
+                icon: Icons.queue_music_rounded,
+                accentColor: PulseColors.accentSecondary,
+              );
+            }
+            return false;
+          },
+          background: Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  PulseColors.accentSecondary.withValues(alpha: 0.35),
+                  Colors.transparent,
+                ],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.only(left: 20),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.playlist_play_rounded, color: PulseColors.accentSecondary, size: 28),
+                const SizedBox(width: 8),
+                Text(
+                  'Play Next',
+                  style: PulseTypography.bodyLarge.copyWith(
+                    color: PulseColors.accentSecondary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          child: card,
         );
       },
     );
@@ -513,19 +570,21 @@ class _SelectionCheckbox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      width: 22,
-      height: 22,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutBack,
+      width: selected ? 24 : 22,
+      height: selected ? 24 : 22,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: selected ? PulseColors.accentSecondary : Colors.black45,
+        color: selected ? PulseColors.accentSecondary : Colors.black.withValues(alpha: 0.6),
         border: Border.all(
-          color: selected ? PulseColors.accentSecondary : Colors.white60,
-          width: 1.8,
+          color: selected ? PulseColors.accentSecondary : Colors.white70,
+          width: 2.0,
         ),
+        boxShadow: selected ? PulseColors.glowShadow(PulseColors.accentSecondary) : null,
       ),
       child: selected
-          ? const Icon(Icons.check_rounded, size: 14, color: Colors.black)
+          ? const Icon(Icons.check_rounded, size: 16, color: Colors.black)
           : null,
     );
   }

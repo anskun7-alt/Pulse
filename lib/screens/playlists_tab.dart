@@ -13,6 +13,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'playlist_detail_screen.dart';
 import '../widgets/interactive_elements.dart';
+import '../widgets/media_picker_sheet.dart';
 
 class PlaylistsTab extends StatefulWidget {
   const PlaylistsTab({Key? key}) : super(key: key);
@@ -33,56 +34,213 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
     super.dispose();
   }
 
+  String _typeFilter = 'All'; // 'All' | 'Permanent' | 'Temporary'
+
   void _showCreatePlaylistDialog() {
     final controller = TextEditingController();
+    bool isTemp = false;
+    String? selectedCoverPath;
+
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          backgroundColor: PulseColors.surfaceHigh,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text("New Playlist", style: PulseTypography.displaySmall),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            style: PulseTypography.bodyLarge,
-            decoration: InputDecoration(
-              hintText: "Playlist Name",
-              hintStyle: PulseTypography.bodyMedium,
-              filled: true,
-              fillColor: PulseColors.surface,
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: PulseColors.accentPrimary, width: 1.5),
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: PulseColors.surfaceHigh,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Text("New Playlist", style: PulseTypography.displaySmall),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      style: PulseTypography.bodyLarge,
+                      decoration: InputDecoration(
+                        hintText: "Playlist Name",
+                        hintStyle: PulseTypography.bodyMedium,
+                        filled: true,
+                        fillColor: PulseColors.surface,
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: PulseColors.accentPrimary, width: 1.5),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: PulseColors.isLight ? Colors.black12 : Colors.white12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Optional cover image picker
+                    GestureDetector(
+                      onTap: () async {
+                        try {
+                          final result = await FilePicker.pickFiles(type: FileType.image);
+                          if (result != null && result.files.single.path != null) {
+                            setDialogState(() {
+                              selectedCoverPath = result.files.single.path;
+                            });
+                          }
+                        } catch (_) {}
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: PulseColors.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Row(
+                          children: [
+                            if (selectedCoverPath != null && File(selectedCoverPath!).existsSync())
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: Image.file(File(selectedCoverPath!), width: 32, height: 32, fit: BoxFit.cover),
+                              )
+                            else
+                              Icon(Icons.image_outlined, size: 20, color: PulseColors.accentSecondary),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                selectedCoverPath != null ? "Cover Image Selected" : "Add Cover Image (Optional)",
+                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ),
+                            if (selectedCoverPath != null)
+                              GestureDetector(
+                                onTap: () => setDialogState(() => selectedCoverPath = null),
+                                child: const Icon(Icons.close, size: 16, color: Colors.white54),
+                              )
+                            else
+                              const Icon(Icons.add_photo_alternate_outlined, size: 18, color: Colors.white54),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setDialogState(() => isTemp = false),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: !isTemp
+                                    ? PulseColors.accentPrimary.withValues(alpha: 0.22)
+                                    : PulseColors.surface,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: !isTemp ? PulseColors.accentPrimary : Colors.white12,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.save_rounded,
+                                    size: 15,
+                                    color: !isTemp ? PulseColors.accentPrimary : Colors.white60,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    "Permanent",
+                                    style: TextStyle(
+                                      color: !isTemp ? Colors.white : Colors.white60,
+                                      fontWeight: !isTemp ? FontWeight.bold : FontWeight.normal,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setDialogState(() => isTemp = true),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isTemp
+                                    ? Colors.amber.withValues(alpha: 0.22)
+                                    : PulseColors.surface,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: isTemp ? Colors.amber : Colors.white12,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.timer_outlined,
+                                    size: 15,
+                                    color: isTemp ? Colors.amber : Colors.white60,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    "Temporary",
+                                    style: TextStyle(
+                                      color: isTemp ? Colors.amber : Colors.white60,
+                                      fontWeight: isTemp ? FontWeight.bold : FontWeight.normal,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      isTemp
+                          ? "Temporary playlists stay only while the app is open and vanish when closed."
+                          : "Permanent playlists are stored safely on device until deleted.",
+                      style: TextStyle(
+                        color: isTemp ? Colors.amber.withValues(alpha: 0.8) : PulseColors.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide(color: PulseColors.isLight ? Colors.black12 : Colors.white12),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text("Cancel", style: TextStyle(color: PulseColors.textSecondary)),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final name = controller.text.trim();
-                if (name.isNotEmpty) {
-                  Navigator.pop(context);
-                  final playlist = await _playlistService.createPlaylist(name);
-                  _navigateToPlaylist(playlist, isSmart: false);
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: PulseColors.accentPrimary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text("Create", style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ],
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text("Cancel", style: TextStyle(color: PulseColors.textSecondary)),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final name = controller.text.trim();
+                    if (name.isNotEmpty) {
+                      Navigator.pop(context);
+                      final playlist = await _playlistService.createPlaylist(
+                        name,
+                        isTemporary: isTemp,
+                        coverImagePath: selectedCoverPath,
+                      );
+                      _navigateToPlaylist(playlist, isSmart: false);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isTemp ? Colors.amber : PulseColors.accentPrimary,
+                    foregroundColor: isTemp ? Colors.black : Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text("Create", style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -90,7 +248,7 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
 
   Future<void> _importM3U() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['m3u', 'm3u8', 'pls'],
         dialogTitle: 'Select M3U / PLS Playlist to Import',
@@ -157,7 +315,7 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
         .toList();
 
     if (playlistFiles.isNotEmpty) {
-      PlaybackService.instance.play(playlistFiles.first, queue: playlistFiles);
+      PlaybackService.instance.playTrack(playlistFiles.first, newQueue: playlistFiles);
     }
   }
 
@@ -167,6 +325,7 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
     required int count,
     required List<Color> gradientColors,
     required VoidCallback onTap,
+    bool isDesktop = false,
   }) {
     return BouncingTap(
       onTap: onTap,
@@ -191,63 +350,116 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
             filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
             child: Container(
               color: PulseColors.surfaceHigh.withValues(alpha: PulseColors.isLight ? 0.90 : 0.70),
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: gradientColors,
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: isDesktop
+                  ? Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: gradientColors,
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: gradientColors.first.withValues(alpha: 0.4),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              )
+                            ],
                           ),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: gradientColors.first.withValues(alpha: 0.4),
-                              blurRadius: 10,
-                              offset: const Offset(0, 3),
-                            )
+                          child: Icon(icon, color: Colors.white, size: 22),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: PulseTypography.bodyLarge.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                "$count tracks",
+                                style: TextStyle(
+                                  color: gradientColors.first,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right_rounded, color: Colors.white.withValues(alpha: 0.3), size: 20),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: gradientColors,
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: gradientColors.first.withValues(alpha: 0.4),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 3),
+                                  )
+                                ],
+                              ),
+                              child: Icon(icon, color: Colors.white, size: 22),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: gradientColors.first.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                "$count tracks",
+                                style: TextStyle(
+                                  color: gradientColors.first,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
-                        child: Icon(icon, color: Colors.white, size: 22),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: gradientColors.first.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          "$count tracks",
-                          style: TextStyle(
-                            color: gradientColors.first,
-                            fontSize: 11,
+                        const SizedBox(height: 12),
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: PulseTypography.bodyLarge.copyWith(
                             fontWeight: FontWeight.bold,
+                            fontSize: 15,
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: PulseTypography.bodyLarge.copyWith(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
+                      ],
                     ),
-                  ),
-                ],
-              ),
             ),
           ),
         ),
@@ -255,7 +467,16 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
     );
   }
 
-  Widget _buildMosaicThumbnail(List<String> paths) {
+  Widget _buildMosaicThumbnail(List<String> paths, {String? coverImagePath}) {
+    if (coverImagePath != null && File(coverImagePath).existsSync()) {
+      return Image.file(
+        File(coverImagePath),
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
+
     final List<String> validArtPaths = [];
     final allFiles = MediaScanner.instance.allFiles.value;
     final pathMap = {for (var f in allFiles) f.path: f};
@@ -332,6 +553,9 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
     final mostCount = _playlistService.getMostPlayed(allFiles).length;
     final addedCount = _playlistService.getJustAdded(allFiles).length;
 
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isDesktop = screenWidth > 700;
+
     return Scaffold(
       backgroundColor: PulseColors.background,
       body: SafeArea(
@@ -400,20 +624,21 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
               ),
             ),
 
-            // ── Smart Collections 2x2 Grid ──────────────────────────
+            // ── Smart Collections Grid ──────────────────────────
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               sliver: SliverGrid.count(
-                crossAxisCount: 2,
+                crossAxisCount: isDesktop ? 4 : 2,
                 crossAxisSpacing: 14,
                 mainAxisSpacing: 14,
-                childAspectRatio: 1.45,
+                childAspectRatio: isDesktop ? 2.4 : 1.45,
                 children: [
                   _buildSmartPlaylistCard(
                     icon: Icons.favorite_rounded,
                     title: "Favorites",
                     count: favCount,
                     gradientColors: [const Color(0xFFFF2E63), const Color(0xFFFF5376)],
+                    isDesktop: isDesktop,
                     onTap: () => _navigateToPlaylist(
                       Playlist(id: 'fav', name: 'Favorites', mediaIds: [], createdDate: DateTime.now()),
                       isSmart: true,
@@ -425,6 +650,7 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                     title: "Recently Played",
                     count: recentCount,
                     gradientColors: [const Color(0xFF00F0FF), const Color(0xFF0072FF)],
+                    isDesktop: isDesktop,
                     onTap: () => _navigateToPlaylist(
                       Playlist(id: 'recent', name: 'Recently Played', mediaIds: [], createdDate: DateTime.now()),
                       isSmart: true,
@@ -436,6 +662,7 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                     title: "Most Played",
                     count: mostCount,
                     gradientColors: [const Color(0xFFFF8800), const Color(0xFFFF3300)],
+                    isDesktop: isDesktop,
                     onTap: () => _navigateToPlaylist(
                       Playlist(id: 'most', name: 'Most Played', mediaIds: [], createdDate: DateTime.now()),
                       isSmart: true,
@@ -447,6 +674,7 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                     title: "Just Added",
                     count: addedCount,
                     gradientColors: [const Color(0xFFA855F7), const Color(0xFFEC4899)],
+                    isDesktop: isDesktop,
                     onTap: () => _navigateToPlaylist(
                       Playlist(id: 'added', name: 'Just Added', mediaIds: [], createdDate: DateTime.now()),
                       isSmart: true,
@@ -460,7 +688,7 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
             // ── Your Playlists Section Header ───────────────────────
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.only(left: 20, right: 20, top: 28, bottom: 12),
+                padding: const EdgeInsets.only(left: 20, right: 20, top: 28, bottom: 8),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -478,11 +706,62 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
               ),
             ),
 
+            // ── Filter Pills: All / Permanent / Temporary ────────────
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 20, right: 20, bottom: 12),
+                child: Row(
+                  children: ['All', 'Permanent', 'Temporary'].map((filter) {
+                    final isSelected = _typeFilter == filter;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: GestureDetector(
+                        onTap: () => setState(() => _typeFilter = filter),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? (filter == 'Temporary'
+                                    ? Colors.amber.withValues(alpha: 0.22)
+                                    : PulseColors.accentPrimary.withValues(alpha: 0.22))
+                                : PulseColors.surface,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: isSelected
+                                  ? (filter == 'Temporary' ? Colors.amber : PulseColors.accentPrimary)
+                                  : Colors.white12,
+                            ),
+                          ),
+                          child: Text(
+                            filter == 'Temporary' ? '⏳ Temporary' : (filter == 'Permanent' ? '📌 Permanent' : '✨ All'),
+                            style: TextStyle(
+                              color: isSelected
+                                  ? (filter == 'Temporary' ? Colors.amber : PulseColors.accentPrimary)
+                                  : PulseColors.textSecondary,
+                              fontSize: 12,
+                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+
             // ── User Custom Playlists ───────────────────────────────
             ValueListenableBuilder<List<Playlist>>(
               valueListenable: _playlistService.playlists,
               builder: (context, userPlaylists, child) {
-                if (userPlaylists.isEmpty) {
+                final filtered = userPlaylists.where((p) {
+                  if (_typeFilter == 'Permanent') return !p.isTemporary;
+                  if (_typeFilter == 'Temporary') return p.isTemporary;
+                  return true;
+                }).toList();
+
+                if (filtered.isEmpty) {
                   return SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
@@ -497,12 +776,23 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                         ),
                         child: Column(
                           children: [
-                            Icon(Icons.playlist_add_rounded, size: 48, color: PulseColors.accentPrimary),
+                            Icon(
+                              _typeFilter == 'Temporary' ? Icons.timer_outlined : Icons.playlist_add_rounded,
+                              size: 48,
+                              color: _typeFilter == 'Temporary' ? Colors.amber : PulseColors.accentPrimary,
+                            ),
                             const SizedBox(height: 12),
-                            Text("No playlists yet", style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold)),
+                            Text(
+                              _typeFilter == 'Temporary'
+                                  ? "No temporary session playlists"
+                                  : (_typeFilter == 'Permanent' ? "No permanent playlists" : "No playlists yet"),
+                              style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold),
+                            ),
                             const SizedBox(height: 4),
                             Text(
-                              "Create playlists to organize your favorite tracks & videos.",
+                              _typeFilter == 'Temporary'
+                                  ? "Create a temporary playlist to queue songs for this session only."
+                                  : "Create playlists to organize your favorite tracks & videos.",
                               textAlign: TextAlign.center,
                               style: PulseTypography.bodySmall,
                             ),
@@ -524,18 +814,21 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                   );
                 }
 
+                final crossCount = isDesktop ? 4 : 2;
+                final aspectRatio = isDesktop ? 0.95 : 0.82;
+
                 return SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   sliver: SliverGrid(
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: crossCount,
                       crossAxisSpacing: 14,
                       mainAxisSpacing: 14,
-                      childAspectRatio: 0.82,
+                      childAspectRatio: aspectRatio,
                     ),
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
-                        final playlist = userPlaylists[index];
+                        final playlist = filtered[index];
                         final durationString = _getPlaylistTotalDuration(playlist.mediaIds);
 
                         return BouncingTap(
@@ -559,7 +852,10 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                                       Positioned.fill(
                                         child: ClipRRect(
                                           borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
-                                          child: _buildMosaicThumbnail(playlist.mediaIds),
+                                          child: _buildMosaicThumbnail(
+                                            playlist.mediaIds,
+                                            coverImagePath: playlist.coverImagePath,
+                                          ),
                                         ),
                                       ),
                                       if (playlist.mediaIds.isNotEmpty)
@@ -572,17 +868,21 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                                               width: 38,
                                               height: 38,
                                               decoration: BoxDecoration(
-                                                color: PulseColors.accentPrimary,
+                                                gradient: PulseColors.accentGradient,
                                                 shape: BoxShape.circle,
                                                 boxShadow: [
                                                   BoxShadow(
-                                                    color: PulseColors.accentPrimary.withValues(alpha: 0.4),
-                                                    blurRadius: 8,
-                                                    offset: const Offset(0, 2),
+                                                    color: PulseColors.accentPrimary.withValues(alpha: 0.5),
+                                                    blurRadius: 10,
+                                                    offset: const Offset(0, 4),
                                                   )
                                                 ],
                                               ),
-                                              child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 24),
+                                              child: const Icon(
+                                                Icons.play_arrow_rounded,
+                                                color: Colors.white,
+                                                size: 22,
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -592,67 +892,107 @@ class _PlaylistsTabState extends State<PlaylistsTab> {
                                 // Title & Track Info
                                 Padding(
                                   padding: const EdgeInsets.all(12),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                  child: Row(
                                     children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              playlist.name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: PulseTypography.bodyLarge.copyWith(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 15,
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    playlist.name,
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: PulseTypography.bodyLarge.copyWith(
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (playlist.isTemporary) ...[
+                                                  const SizedBox(width: 4),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.amber.withValues(alpha: 0.18),
+                                                      borderRadius: BorderRadius.circular(4),
+                                                      border: Border.all(color: Colors.amber.withValues(alpha: 0.5), width: 0.8),
+                                                    ),
+                                                    child: const Text(
+                                                      '⏳ Temp',
+                                                      style: TextStyle(color: Colors.amber, fontSize: 9, fontWeight: FontWeight.bold),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              "${playlist.mediaIds.length} items${durationString.isNotEmpty ? ' • $durationString' : ''}",
+                                              style: TextStyle(
+                                                color: Colors.white.withValues(alpha: 0.5),
+                                                fontSize: 11,
                                               ),
                                             ),
+                                          ],
+                                        ),
+                                      ),
+                                      PopupMenuButton<String>(
+                                        icon: Icon(
+                                          Icons.more_vert_rounded,
+                                          color: Colors.white.withValues(alpha: 0.5),
+                                          size: 18,
+                                        ),
+                                        color: PulseColors.surfaceHigh,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                        onSelected: (val) {
+                                          if (val == 'add') {
+                                            showModalBottomSheet(
+                                              context: context,
+                                              backgroundColor: Colors.transparent,
+                                              isScrollControlled: true,
+                                              builder: (context) => MediaPickerSheet(playlist: playlist),
+                                            );
+                                          } else if (val == 'export') {
+                                            _exportM3U(playlist);
+                                          } else if (val == 'delete') {
+                                            _playlistService.deletePlaylist(playlist.id);
+                                          }
+                                        },
+                                        itemBuilder: (context) => [
+                                          const PopupMenuItem(
+                                            value: 'add',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.playlist_add_rounded, size: 18),
+                                                SizedBox(width: 8),
+                                                Text('Add Media'),
+                                              ],
+                                            ),
                                           ),
-                                          PopupMenuButton<String>(
-                                            icon: const Icon(Icons.more_vert_rounded, size: 18, color: Colors.white54),
-                                            color: PulseColors.surfaceHigh,
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                            onSelected: (val) async {
-                                              if (val == 'export') {
-                                                await _exportM3U(playlist);
-                                              } else if (val == 'delete') {
-                                                await _playlistService.deletePlaylist(playlist.id);
-                                              }
-                                            },
-                                            itemBuilder: (ctx) => [
-                                              const PopupMenuItem(
-                                                value: 'export',
-                                                child: Row(
-                                                  children: [
-                                                    Icon(Icons.file_download_outlined, color: Colors.white70, size: 20),
-                                                    SizedBox(width: 8),
-                                                    Text('Export M3U Playlist', style: TextStyle(color: Colors.white)),
-                                                  ],
-                                                ),
-                                              ),
-                                              const PopupMenuItem(
-                                                value: 'delete',
-                                                child: Row(
-                                                  children: [
-                                                    Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
-                                                    SizedBox(width: 8),
-                                                    Text('Delete Playlist', style: TextStyle(color: Colors.redAccent)),
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
+                                          const PopupMenuItem(
+                                            value: 'export',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.file_download_outlined, size: 18),
+                                                SizedBox(width: 8),
+                                                Text('Export M3U'),
+                                              ],
+                                            ),
+                                          ),
+                                          PopupMenuItem(
+                                            value: 'delete',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.delete_outline, color: PulseColors.danger, size: 18),
+                                                const SizedBox(width: 8),
+                                                Text('Delete', style: TextStyle(color: PulseColors.danger)),
+                                              ],
+                                            ),
                                           ),
                                         ],
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        "${playlist.mediaIds.length} tracks${durationString.isNotEmpty ? ' • $durationString' : ''}",
-                                        style: TextStyle(
-                                          color: PulseColors.textSecondary,
-                                          fontSize: 12,
-                                        ),
                                       ),
                                     ],
                                   ),

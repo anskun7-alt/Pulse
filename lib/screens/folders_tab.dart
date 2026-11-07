@@ -10,9 +10,9 @@ import '../services/playback_service.dart';
 import '../widgets/action_toolbar.dart';
 import '../widgets/add_to_playlist_sheet.dart';
 import '../widgets/media_card.dart';
-import '../players/video_player_screen.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../services/view_mode_service.dart';
 
 class FoldersTab extends StatefulWidget {
   const FoldersTab({Key? key}) : super(key: key);
@@ -77,6 +77,7 @@ class _FoldersTabState extends State<FoldersTab> {
         _navigateTo(selectedDir);
         // Automatically register to custom scanned folders
         await MediaScanner.instance.addCustomFolder(selectedPath);
+        await MediaScanner.instance.scanFolder(selectedPath);
       }
     }
   }
@@ -168,18 +169,52 @@ class _FoldersTabState extends State<FoldersTab> {
         .toList();
     if (mediaFiles.isEmpty) return;
 
-    // Let AddToPlaylistSheet handle closing itself and showing snackbar.
-    // We pass no onAdded/onPlaylistCreated so it uses its built-in flow.
     await showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (context) => AddToPlaylistSheet.multiple(
         mediaFiles: mediaFiles,
       ),
     );
-    // Clear selection after the sheet closes regardless of action taken.
     _selection.clear();
     setState(() {});
+  }
+
+  Future<void> _addDirectoryToPlaylist(Directory dir) async {
+    final List<MediaFile> files = [];
+    try {
+      final entities = dir.listSync(recursive: true, followLinks: false);
+      for (final e in entities) {
+        if (e is File) {
+          final ext = e.path.split('.').last.toLowerCase();
+          if (MediaScanner.audioExtensions.contains(ext) || MediaScanner.videoExtensions.contains(ext)) {
+            final mediaFile = _findMediaFile(e.path);
+            if (mediaFile != null) {
+              files.add(mediaFile);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error scanning folder for playlist: $e');
+    }
+
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No playable media files found in this folder')),
+      );
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => AddToPlaylistSheet.multiple(
+        mediaFiles: files,
+      ),
+    );
   }
 
   MediaFile? _findMediaFile(String path) {
@@ -280,12 +315,31 @@ class _FoldersTabState extends State<FoldersTab> {
                             setState(() {});
                           },
                         ),
-                      ] else
+                      ] else ...[
+                        ValueListenableBuilder<bool>(
+                          valueListenable: ViewModeService.instance.isGrid,
+                          builder: (context, isGrid, _) {
+                            return IconButton(
+                              icon: Icon(
+                                isGrid ? Icons.format_list_bulleted_rounded : Icons.grid_view_rounded,
+                                color: Colors.white,
+                              ),
+                              tooltip: isGrid ? 'Switch to List View' : 'Switch to Grid View',
+                              onPressed: () => ViewModeService.instance.toggleViewMode(),
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.playlist_add_rounded, color: Colors.white),
+                          tooltip: 'Add this folder to playlist',
+                          onPressed: () => _addDirectoryToPlaylist(_currentDir!),
+                        ),
                         IconButton(
                           icon: const Icon(Icons.folder_open_rounded, color: Colors.white),
                           tooltip: 'Browse different folder',
                           onPressed: _selectFolder,
                         ),
+                      ],
                     ],
                   ),
                 ),
@@ -330,96 +384,223 @@ class _FoldersTabState extends State<FoldersTab> {
                   ),
                 ],
 
-                // Content List View
+                // Content View (Grid / List)
                 Expanded(
                   child: _dirContents.isEmpty
                       ? Center(child: Text("Folder is empty.", style: PulseTypography.bodyLarge))
-                      : ListView.builder(
-                          itemCount: _dirContents.length,
-                          padding: EdgeInsets.only(
-                            left: 20, right: 20, top: 8,
-                            bottom: isSelectionMode ? 200 : 168,
-                          ),
-                          itemBuilder: (context, index) {
-                            final entity = _dirContents[index];
-                            final name = entity.path.split(Platform.pathSeparator).last;
-
-                            if (entity is Directory) {
-                              final isPinned = _pinnedFolders.any((d) => d.path == entity.path);
-
-                              return ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                leading: Icon(Icons.folder_rounded, color: PulseColors.accentPrimary, size: 36),
-                                title: Text(
-                                  name,
-                                  style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold),
+                      : ValueListenableBuilder<bool>(
+                          valueListenable: ViewModeService.instance.isGrid,
+                          builder: (context, isGrid, _) {
+                            if (isGrid) {
+                              return GridView.builder(
+                                itemCount: _dirContents.length,
+                                padding: EdgeInsets.only(
+                                  left: 20, right: 20, top: 8,
+                                  bottom: isSelectionMode ? 200 : 168,
                                 ),
-                                trailing: IconButton(
-                                  icon: Icon(
-                                    isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
-                                    color: isPinned ? PulseColors.accentSecondary : PulseColors.textSecondary,
-                                    size: 18,
-                                  ),
-                                  onPressed: () => _togglePin(entity),
+                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: MediaQuery.of(context).size.width >= 1200
+                                      ? 5
+                                      : (MediaQuery.of(context).size.width >= 800
+                                          ? 4
+                                          : (MediaQuery.of(context).size.width >= 600 ? 3 : 2)),
+                                  crossAxisSpacing: 16,
+                                  mainAxisSpacing: 16,
+                                  childAspectRatio: 0.84,
                                 ),
-                                onTap: () {
-                                  _selection.clear();
-                                  _navigateTo(entity);
+                                itemBuilder: (context, index) {
+                                  final entity = _dirContents[index];
+                                  final name = entity.path.split(Platform.pathSeparator).last;
+
+                                  if (entity is Directory) {
+                                    final isPinned = _pinnedFolders.any((d) => d.path == entity.path);
+                                    return GestureDetector(
+                                      onTap: () {
+                                        _selection.clear();
+                                        _navigateTo(entity);
+                                      },
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: PulseColors.surfaceHigh.withValues(alpha: 0.75),
+                                          borderRadius: BorderRadius.circular(16),
+                                          border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 1),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Container(
+                                                  width: 36,
+                                                  height: 36,
+                                                  decoration: BoxDecoration(
+                                                    gradient: const LinearGradient(
+                                                      colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                                                      begin: Alignment.topLeft,
+                                                      end: Alignment.bottomRight,
+                                                    ),
+                                                    borderRadius: BorderRadius.circular(10),
+                                                  ),
+                                                  child: const Icon(Icons.folder_rounded, size: 20, color: Colors.white),
+                                                ),
+                                                IconButton(
+                                                  icon: Icon(
+                                                    isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+                                                    color: isPinned ? PulseColors.accentSecondary : PulseColors.textSecondary,
+                                                    size: 18,
+                                                  ),
+                                                  onPressed: () => _togglePin(entity),
+                                                ),
+                                              ],
+                                            ),
+                                            Text(
+                                              name,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold, fontSize: 13.5),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  } else {
+                                    final mediaFile = _findMediaFile(entity.path)!;
+                                    final isSelected = _selection.isSelected(mediaFile.path);
+                                    return MediaCard(
+                                      file: mediaFile,
+                                      isGrid: true,
+                                      isSelectionMode: isSelectionMode,
+                                      isSelected: isSelected,
+                                      onLongPress: () {
+                                        _selection.toggle(mediaFile.path);
+                                        setState(() {});
+                                      },
+                                      onTap: () {
+                                        if (isSelectionMode) {
+                                          _selection.toggle(mediaFile.path);
+                                          setState(() {});
+                                          return;
+                                        }
+                                        if (mediaFile.isVideo) {
+                                          final folderVideos = _dirContents
+                                              .where((e) => e is File && MediaScanner.videoExtensions.contains(e.path.split('.').last.toLowerCase()))
+                                              .map((e) => _findMediaFile(e.path)!)
+                                              .whereType<MediaFile>()
+                                              .toList();
+                                          PlaybackService.instance.navigateToVideo(folderVideos, mediaFile);
+                                        } else {
+                                          final folderAudio = _dirContents
+                                              .where((e) => e is File && MediaScanner.audioExtensions.contains(e.path.split('.').last.toLowerCase()))
+                                              .map((e) => _findMediaFile(e.path)!)
+                                              .whereType<MediaFile>()
+                                              .toList();
+                                          PlaybackService.instance.playTrack(mediaFile, newQueue: folderAudio);
+                                        }
+                                      },
+                                    );
+                                  }
                                 },
                               );
-                            } else {
-                              // File Card
-                              final mediaFile = _findMediaFile(entity.path)!;
-                              final isSelected = _selection.isSelected(mediaFile.path);
-                              return AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(16),
-                                  color: isSelected
-                                      ? PulseColors.accentPrimary.withValues(alpha: 0.12)
-                                      : Colors.transparent,
-                                ),
-                                child: MediaCard(
-                                  file: mediaFile,
-                                  isGrid: false,
-                                  isSelectionMode: isSelectionMode,
-                                  isSelected: isSelected,
-                                  onTap: () {
-                                    if (isSelectionMode) {
-                                      _selection.toggle(mediaFile.path);
-                                      setState(() {});
-                                      return;
-                                    }
-                                    if (mediaFile.isVideo) {
-                                      final folderVideos = _dirContents
-                                          .where((entity) => entity is File && MediaScanner.videoExtensions.contains(entity.path.split('.').last.toLowerCase()))
-                                          .map((entity) => _findMediaFile(entity.path)!)
-                                          .whereType<MediaFile>()
-                                          .toList();
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (context) => VideoPlayerScreen(
-                                            file: mediaFile,
-                                            playlist: folderVideos,
-                                          ),
-                                        ),
-                                      );
-                                    } else {
-                                      final folderAudio = _dirContents
-                                          .where((entity) => entity is File && MediaScanner.audioExtensions.contains(entity.path.split('.').last.toLowerCase()))
-                                          .map((entity) => _findMediaFile(entity.path)!)
-                                          .whereType<MediaFile>()
-                                          .toList();
-                                      PlaybackService.instance.playTrack(mediaFile, newQueue: folderAudio);
-                                    }
-                                  },
-                                  onLongPress: () {
-                                    _selection.toggle(mediaFile.path);
-                                    setState(() {});
-                                  },
-                                ),
-                              );
                             }
+
+                            return ListView.builder(
+                              itemCount: _dirContents.length,
+                              padding: EdgeInsets.only(
+                                left: 20, right: 20, top: 8,
+                                bottom: isSelectionMode ? 200 : 168,
+                              ),
+                              itemBuilder: (context, index) {
+                                final entity = _dirContents[index];
+                                final name = entity.path.split(Platform.pathSeparator).last;
+
+                                if (entity is Directory) {
+                                  final isPinned = _pinnedFolders.any((d) => d.path == entity.path);
+
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: Icon(Icons.folder_rounded, color: PulseColors.accentPrimary, size: 36),
+                                    title: Text(
+                                      name,
+                                      style: PulseTypography.bodyLarge.copyWith(fontWeight: FontWeight.bold),
+                                    ),
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: Icon(
+                                            Icons.playlist_add_rounded,
+                                            color: PulseColors.accentSecondary,
+                                            size: 22,
+                                          ),
+                                          tooltip: "Add Folder to Playlist",
+                                          onPressed: () => _addDirectoryToPlaylist(entity),
+                                        ),
+                                        IconButton(
+                                          icon: Icon(
+                                            isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+                                            color: isPinned ? PulseColors.accentSecondary : PulseColors.textSecondary,
+                                            size: 18,
+                                          ),
+                                          onPressed: () => _togglePin(entity),
+                                        ),
+                                      ],
+                                    ),
+                                    onTap: () {
+                                      _selection.clear();
+                                      _navigateTo(entity);
+                                    },
+                                  );
+                                } else {
+                                  // File Card
+                                  final mediaFile = _findMediaFile(entity.path)!;
+                                  final isSelected = _selection.isSelected(mediaFile.path);
+                                  return AnimatedContainer(
+                                    duration: const Duration(milliseconds: 150),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(16),
+                                      color: isSelected
+                                          ? PulseColors.accentPrimary.withValues(alpha: 0.12)
+                                          : Colors.transparent,
+                                    ),
+                                    child: MediaCard(
+                                      file: mediaFile,
+                                      isGrid: false,
+                                      isSelectionMode: isSelectionMode,
+                                      isSelected: isSelected,
+                                      onLongPress: () {
+                                        _selection.toggle(mediaFile.path);
+                                        setState(() {});
+                                      },
+                                      onTap: () {
+                                        if (isSelectionMode) {
+                                          _selection.toggle(mediaFile.path);
+                                          setState(() {});
+                                          return;
+                                        }
+                                        if (mediaFile.isVideo) {
+                                          final folderVideos = _dirContents
+                                              .where((e) => e is File && MediaScanner.videoExtensions.contains(e.path.split('.').last.toLowerCase()))
+                                              .map((e) => _findMediaFile(e.path)!)
+                                              .whereType<MediaFile>()
+                                              .toList();
+                                          PlaybackService.instance.navigateToVideo(folderVideos, mediaFile);
+                                        } else {
+                                          final folderAudio = _dirContents
+                                              .where((e) => e is File && MediaScanner.audioExtensions.contains(e.path.split('.').last.toLowerCase()))
+                                              .map((e) => _findMediaFile(e.path)!)
+                                              .whereType<MediaFile>()
+                                              .toList();
+                                          PlaybackService.instance.playTrack(mediaFile, newQueue: folderAudio);
+                                        }
+                                      },
+                                    ),
+                                  );
+                                }
+                              },
+                            );
                           },
                         ),
                 ),
@@ -437,6 +618,21 @@ class _FoldersTabState extends State<FoldersTab> {
                 onMove: () => ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Move: coming soon')),
                 ),
+                onPlaySelected: () {
+                  final selectedFiles = _selection.selectedIds
+                      .map((p) => _findMediaFile(p))
+                      .whereType<MediaFile>()
+                      .toList();
+                  if (selectedFiles.isNotEmpty) {
+                    _selection.clear();
+                    final first = selectedFiles.first;
+                    if (first.isVideo) {
+                      PlaybackService.instance.navigateToVideo(selectedFiles, first);
+                    } else {
+                      PlaybackService.instance.playTrack(first, newQueue: selectedFiles);
+                    }
+                  }
+                },
                 onDelete: () async {
                   final selectedPaths = _selection.selectedIds.toList();
                   if (selectedPaths.isEmpty) return;
